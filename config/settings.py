@@ -32,6 +32,7 @@ TOTAL_TIMESTEPS = 1_000_000
 CASH_RISK_FRACTION = 0.99
 STOP_LOSS_PCT = 0.10     # Reference variables for standard boundaries
 TAKE_PROFIT_PCT = 0.20
+MAX_BARS_NORMALIZATION = 100  # For hourly swing trading
 
 # 6. FEATURE ENGINEERING PARAMETERS
 if TIMEFRAME == "1h":

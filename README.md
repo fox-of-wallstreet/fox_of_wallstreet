@@ -1,114 +1,68 @@
-# 🛡️ Sentinel V7: AI Algorithmic Trading System
+# 🛡️ Sentinel V7: Multi-Stock AI Swing Trader
 
-**Status:** Live / Active  
-**Framework:** Stable Baselines3 (PPO)  
-**Markets:** `TSLA`, `NVDA`, `AAPL`
+Status: Active | Framework: Stable Baselines 3 (PPO) | Architecture: MLOps Control Room
 
-Sentinel V7 is a Reinforcement Learning-based algorithmic trading system built for long-only swing trading on Alpaca markets. It combines financial news sentiment from FinBERT with macroeconomic and market features to make hourly trading decisions using a PPO agent.
+## 1. System Architecture (The Control Room)
 
-## System Architecture
+Sentinel V7 is a Reinforcement Learning (RL) system managed entirely via a central "Control Room" (`config/settings.py`). Your team does not need to edit core logic to run experiments. By modifying `settings.py`, the entire pipeline adapts dynamically.
 
-Sentinel V7 is designed with a modular, one-click pipeline. By changing the `SYMBOL` in `config/settings.py`, the full data, feature engineering, optimization, training, and backtesting workflow automatically adapts.
+### The Pipeline
 
-### One-Click Pipeline
+| Script | Role |
+|---|---|
+| `data_engine.py` | Fetches data based on `SYMBOL` and `TIMEFRAME` from settings |
+| `processor.py` | Builds features and scales them, saving the scaler to the dynamic artifact vault |
+| `train.py` | Trains the PPO agent and generates a `metadata.json` receipt |
+| `backtest.py` | Validates the model on unseen data, exporting a transaction ledger |
 
-- `data_engine.py` fetches \(1\)-hour candles from `yfinance` and real-time news from Alpaca.
-- `processor.py` scores headlines with FinBERT and builds \(16\) micro/macro/contextual features.
-- `optimize.py` uses Optuna Bayesian Optimization to search for the best hyperparameters.
-- `train.py` trains the PPO agent with a \(5\)-hour rolling memory using `VecFrameStack`.
-- `backtest.py` evaluates the trained model on an unseen holdout dataset.
+---
 
-## The RL Brain
+## 2. Configurable Core Logic
 
-The agent observes a rolling "combat dashboard" of \(20\) variables every hour. These are stacked over a \(5\)-hour memory window using `VecFrameStack(n_stack=5)`, resulting in \(100\) values per observation.
+### The Action Space (`ACTION_SPACE_TYPE`)
 
-### Observation Space
+You can easily toggle between two heavily tested action spaces:
 
-| Category | Features | Scaled? |
-|---|---|---|
-| Micro (Asset) | Log Returns, Volatility Z-Score, RSI, MACD Histogram, Bollinger `%B`, ATR `%` | Yes (`RobustScaler`) |
-| Macro (Market) | QQQ Returns, ARKK Returns, Relative Strength, VIX, TNX | Yes (`RobustScaler`) |
-| Context (News) | FinBERT Sentiment EMA, News Intensity, Sin/Cos Time, Minutes to Close | Yes (`RobustScaler`) |
-| Portfolio | Position Flag, Unrealized PnL `%`, Cash Ratio, Time-in-Trade | Manually scaled |
+- **`"discrete_3"`** — Conviction Trading (`0=Sell All`, `1=Buy All`, `2=Hold`). Best for aggressive swing trading.
+- **`"discrete_5"`** — Scaling (`0=Sell 100%`, `1=Sell 50%`, `2=Hold`, `3=Buy 50%`, `4=Buy 100%`). Best for testing advanced portfolio management.
 
-## Action Space
+### The Reward Strategy (`REWARD_STRATEGY`)
 
-To avoid the "hovering trap" often seen in continuous action spaces while still preserving portfolio sizing flexibility, Sentinel V7 uses an extended discrete action space with \(5\) bins.
+- **`"absolute_asymmetric"`** — Simulates the Sortino Ratio. Rewards profits 1:1, but punishes losses 2:1. Teaches the AI strict loss aversion and capital preservation.
+- **`"pure_pnl"`** — Rewards and punishes strictly based on 1:1 portfolio percentage change.
 
-### Extended Discrete Actions
+> **Note:** All actions are subject to strict **Invalid Action Masking**. If the AI attempts to sell 0 shares, it is penalized `-0.05` points to prevent "Ghost Trading" loops.
 
-- `0` — **Strong Sell**: Liquidate \(100\%\) of held shares.
-- `1` — **Light Sell**: Liquidate \(50\%\) of held shares.
-- `2` — **Hold**: Maintain current portfolio state.
-- `3` — **Light Buy**: Invest \(50\%\) of available cash.
-- `4` — **Strong Buy**: Invest \(100\%\) of available cash.
+---
 
-> **Note:** Short selling is disabled to prevent unlimited downside risk.
+## 3. The Artifact Vault (Reproducibility)
 
-## Reward Function
+Every experiment automatically creates a dedicated folder in `artifacts/` named after your parameters (e.g., `ppo_TSLA_1h_discrete_3_v1`).
 
-Sentinel V7 uses an absolute return reward baseline with asymmetric loss aversion.
+Each folder contains:
 
-### Trading Friction
+| File | Description |
+|---|---|
+| `model.zip` | The trained neural network weights |
+| `scaler.pkl` | The `RobustScaler` fitted specifically to that training run |
+| `metadata.json` | A receipt detailing the exact dates, features, and settings used |
+| `backtest_ledger.csv` | A log of every transaction made during validation |
 
-Each transaction includes a simulated round-trip slippage/fee cost of \(0.1\%\), modeled as \(0.05\%\) per side.
+This ensures your team can perfectly reproduce any winning model without guessing which settings were used.
 
-### Reward Logic
+---
 
-- If the portfolio grows by \(1\%\) in an hour, reward \(+= 1.0\)
-- If the portfolio drops by \(1\%\) in an hour, reward \(-= 2.0\)
+## 4. Operational Guide
 
-This asymmetry penalizes losses twice as heavily as gains, encouraging the agent to develop dynamic stop-loss-like behavior without hardcoded rules.
+```bash
+# Step 1: Edit your experiment parameters
+config/settings.py  # Set your Symbol, Timeframe, and Dates
 
-## Project Structure
+# Step 2: Ingest raw data
+python scripts/data_engine.py
 
-```text
-Final_Project/
-├── artifacts/              # STORE: Models (.zip), scalers (.pkl), and trade ledgers
-├── config/                 # CONTROL: settings.py and environment variables
-├── core/                   # ENGINE:
-│   ├── environment.py      # Custom Gym trading environment
-│   └── processor.py        # Feature engineering and scaling logic
-├── data/                   # DATA: Raw and processed historical CSVs
-├── scripts/                # TRIGGERS:
-│   ├── optimize.py         # Optuna Bayesian hyperparameter search
-│   ├── train.py            # PPO training script
-│   ├── backtest.py         # Holdout evaluation script
-│   └── live_trader.py      # Live deployment via Alpaca and Telegram
-```
+# Step 3: Train the model and generate a metadata receipt
+python scripts/train.py
 
-## Maintenance and Troubleshooting
-
-### Feature Mismatch Error
-
-```text
-ValueError: Unexpected observation shape
-```
-
-**Cause:**  
-The feature list in `processor.py` was changed, or the lookback window was modified without retraining the `RobustScaler`.
-
-**Solution:**
-
-- Delete the `.zip` and `.pkl` files in `artifacts/`
-- Clear all `__pycache__` folders
-- Re-run `train.py`
-
-### Sentiment Lag
-
-The data engine scores the latest \(100+\) headlines. If FinBERT runs slowly:
-
-- Check that your internet connection is stable
-- Configure the model to run on a local GPU using CUDA or MPS if available
-
-## Notes
-
-- Strategy type: **Long-only swing trading**
-- Core algorithm: **Proximal Policy Optimization (PPO)**
-- Sentiment engine: **FinBERT**
-- Broker/integration: **Alpaca**
-- Memory mechanism: **`VecFrameStack(n_stack=5)`**
-
-## Disclaimer
-
-This project is for research and educational purposes only. It does not constitute financial advice. Live trading involves risk, including the potential loss of capital.
+# Step 4: Evaluate performance on unseen data
+python scripts/backtest.py

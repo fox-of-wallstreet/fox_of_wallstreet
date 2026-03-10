@@ -42,19 +42,21 @@ def get_download_period():
     """Map timeframe to a sensible yfinance period."""
     return "730d" if settings.TIMEFRAME == "1h" else "max"
 
-
-def to_ny_naive_hour(series):
-    """
-    Convert datetime series to America/New_York, strip timezone, and floor to the hour.
-    Handles both tz-aware and tz-naive timestamps.
-    """
+def normalize_timestamp(series):
+    """Normalize timestamps to New York timezone and correct resolution."""
     dt = pd.to_datetime(series)
 
-    # If tz-naive, assume UTC before converting
     if getattr(dt.dt, "tz", None) is None:
         dt = dt.dt.tz_localize("UTC")
 
-    return dt.dt.tz_convert("America/New_York").dt.tz_localize(None).dt.floor("h")
+    dt = dt.dt.tz_convert("America/New_York").dt.tz_localize(None)
+
+    if settings.TIMEFRAME == "1h":
+        return dt.dt.floor("h")
+    elif settings.TIMEFRAME == "1d":
+        return dt.dt.floor("d")
+    else:
+        raise ValueError(f"Unsupported TIMEFRAME: {settings.TIMEFRAME}")
 
 
 def safe_download(symbol, period, interval, retries=3, sleep_sec=5):
@@ -125,8 +127,8 @@ def get_macro_market_data(symbol):
         if "Date" not in df.columns:
             raise ValueError(f"No Date column found after reset_index() for {ticker}.")
 
-        # Normalize timestamps
-        df["Date"] = to_ny_naive_hour(df["Date"])
+        # Normalize timestamps (timeframe-aware)
+        df["Date"] = normalize_timestamp(df["Date"])
 
         if ticker == symbol:
             required_cols = ["Date", "Open", "High", "Low", "Close", "Volume"]
@@ -216,7 +218,7 @@ def get_paginated_news_sentiment(symbol, start_date, end_date):
         sentiment_scores.append(score_headline_finbert(headline))
 
     news_df["Raw_Sentiment"] = sentiment_scores
-    news_df["Date"] = to_ny_naive_hour(news_df["created_at"])
+    news_df["Date"] = normalize_timestamp(news_df["created_at"])
 
     hourly_sentiment = news_df.groupby("Date").agg(
         Sentiment_EMA=("Raw_Sentiment", "mean"),

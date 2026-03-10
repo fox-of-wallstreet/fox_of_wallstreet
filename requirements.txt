@@ -30,3 +30,5 @@ stable_baselines3
 
 yfinance
 
+transformers
+

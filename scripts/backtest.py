@@ -1,4 +1,9 @@
+'''
+Missing module docstring.
+'''
+
 import os
+import os.path
 import sys
 import pandas as pd
 from stable_baselines3 import PPO
@@ -12,23 +17,26 @@ from core.processor import add_technical_indicators, prepare_features
 from core.environment import TradingEnv
 
 def run_backtest():
-    print(f"🧪 STARTING FINAL EXAM: {settings.EXPERIMENT_NAME}")
+    '''
+    Missing function or method docstring.
+    '''
+    print(os.path.basename(__file__) + '(' + str(sys._getframe(0).f_lineno) + '):', f"🧪 STARTING FINAL EXAM: {settings.EXPERIMENT_NAME}")
 
     csv_path = f"data/{settings.SYMBOL.lower()}_{settings.TIMEFRAME}_hybrid.csv"
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"❌ Cannot find {csv_path}. Run data_engine.py first!")
 
     df = pd.read_csv(csv_path)
-    df['Date'] = pd.to_datetime(df['Date'])
+    df['Date'] = pd.to_datetime(df['Date'], utc=True)
 
     # Slice to Testing Dates
-    mask = (df['Date'] >= pd.to_datetime(settings.TEST_START_DATE)) & (df['Date'] <= pd.to_datetime(settings.TEST_END_DATE))
+    mask = (df['Date'] >= pd.to_datetime(settings.TEST_START_DATE, utc=True)) & (df['Date'] <= pd.to_datetime(settings.TEST_END_DATE, utc=True))
     test_df = df.loc[mask].copy().reset_index(drop=True)
 
     if test_df.empty:
         raise ValueError(f"❌ Test dataframe is empty! Check your TEST_START_DATE ({settings.TEST_START_DATE}) and TEST_END_DATE.")
 
-    print(f"📅 Testing Data: {len(test_df)} rows loaded.")
+    print(os.path.basename(__file__) + '(' + str(sys._getframe(0).f_lineno) + '):', f"📅 Testing Data: {len(test_df)} rows loaded.")
 
     # Process features
     test_df = add_technical_indicators(test_df)
@@ -47,8 +55,13 @@ def run_backtest():
     env = VecFrameStack(vec_env, n_stack=5)
 
     # Load the Brain
-    print(f"🧠 Loading trained model from {settings.MODEL_PATH}.zip")
-    model = PPO.load(settings.MODEL_PATH, env=env)
+    model_path = settings.MODEL_PATH
+    print(os.path.basename(__file__) + '(' + str(sys._getframe(0).f_lineno) + '):', f"🧠 Loading trained model from {model_path}.zip")
+    if os.path.isfile(f"{model_path}.zip"):
+        model = PPO.load(model_path, env=env)
+    else:
+        print(os.path.basename(__file__) + '(' + str(sys._getframe(0).f_lineno) + '):', f'Cannot PPO.load({model_path}): No such file or directory.')
+        return
 
     obs = env.reset()
     done = False
@@ -62,7 +75,7 @@ def run_backtest():
 
     prev_position = 0.0
 
-    print("📈 Simulating live trading...")
+    print(os.path.basename(__file__) + '(' + str(sys._getframe(0).f_lineno) + '):', "📈 Simulating live trading...")
 
     while not done:
         action, _states = model.predict(obs, deterministic=True)
@@ -88,18 +101,18 @@ def run_backtest():
     final_val = step_info['portfolio_value']
     total_return = ((final_val - initial_val) / initial_val) * 100
 
-    print("="*50)
-    print(f"🏆 BACKTEST RESULTS: {settings.EXPERIMENT_NAME} 🏆")
-    print(f"Final Portfolio Value: ${final_val:.2f}")
-    print(f"Total Return: {total_return:.2f}%")
-    print(f"Total Real Transactions: {len(trade_history)}")
-    print("="*50)
+    print(os.path.basename(__file__) + '(' + str(sys._getframe(0).f_lineno) + '):', "="*50)
+    print(os.path.basename(__file__) + '(' + str(sys._getframe(0).f_lineno) + '):', f"🏆 BACKTEST RESULTS: {settings.EXPERIMENT_NAME} 🏆")
+    print(os.path.basename(__file__) + '(' + str(sys._getframe(0).f_lineno) + '):', f"Final Portfolio Value: ${final_val:.2f}")
+    print(os.path.basename(__file__) + '(' + str(sys._getframe(0).f_lineno) + '):', f"Total Return: {total_return:.2f}%")
+    print(os.path.basename(__file__) + '(' + str(sys._getframe(0).f_lineno) + '):', f"Total Real Transactions: {len(trade_history)}")
+    print(os.path.basename(__file__) + '(' + str(sys._getframe(0).f_lineno) + '):', "="*50)
 
     if trade_history:
         df_trades = pd.DataFrame(trade_history)
         ledger_path = os.path.join(settings.ARTIFACT_DIR, "backtest_ledger.csv")
         df_trades.to_csv(ledger_path, index=False)
-        print(f"\n💾 Full Ledger saved to Vault: {ledger_path}")
+        print(os.path.basename(__file__) + '(' + str(sys._getframe(0).f_lineno) + '):', f"\n💾 Full Ledger saved to Vault: {ledger_path}")
 
 if __name__ == "__main__":
     run_backtest()

@@ -26,3 +26,7 @@ tqdm
 
 gymnasium
 
+stable_baselines3
+
+yfinance
+

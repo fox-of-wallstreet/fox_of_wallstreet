@@ -1,3 +1,7 @@
+'''
+Missing module docstring.
+'''
+
 import os
 import sys
 import json
@@ -12,6 +16,9 @@ from core.processor import add_technical_indicators, prepare_features
 from core.environment import TradingEnv
 
 def run_training():
+    '''
+    Missing function or method docstring.
+    '''
     print(f"🚀 INITIATING TRAINING: {settings.EXPERIMENT_NAME}")
 
     # 1. Load Data
@@ -20,10 +27,10 @@ def run_training():
         raise FileNotFoundError(f"❌ Cannot find {csv_path}. Run data_engine.py first!")
 
     df = pd.read_csv(csv_path)
-    df['Date'] = pd.to_datetime(df['Date'])
+    df['Date'] = pd.to_datetime(df['Date'], utc=True)
 
     # Slice to Training Dates
-    mask = (df['Date'] >= pd.to_datetime(settings.TRAIN_START_DATE)) & (df['Date'] <= pd.to_datetime(settings.TRAIN_END_DATE))
+    mask = (df['Date'] >= pd.to_datetime(settings.TRAIN_START_DATE, utc=True)) & (df['Date'] <= pd.to_datetime(settings.TRAIN_END_DATE, utc=True))
     train_df = df.loc[mask].copy().reset_index(drop=True)
     print(f"📅 Training Data: {len(train_df)} rows from {settings.TRAIN_START_DATE} to {settings.TRAIN_END_DATE}")
 

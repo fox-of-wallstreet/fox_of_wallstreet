@@ -4,9 +4,6 @@ from gymnasium import spaces
 import numpy as np
 import pandas as pd
 
-# 🎛️ Import the Remote Control
-from config.settings import ACTION_SPACE_TYPE, CASH_RISK_FRACTION, REWARD_STRATEGY, STOP_LOSS_PCT, TAKE_PROFIT_PCT
-
 class TradingEnv(gym.Env):
     metadata = {'render_modes': ['human']}
 
@@ -20,9 +17,9 @@ class TradingEnv(gym.Env):
 
         # 🟢 SUB-CHECKPOINT 2.1: DYNAMIC ACTION SPACE
         # The environment reads settings.py and adapts instantly!
-        if ACTION_SPACE_TYPE == "discrete_3":
+        if settings.ACTION_SPACE_TYPE == "discrete_3":
             self.action_space = spaces.Discrete(3) # 0: Sell All, 1: Buy All, 2: Hold
-        elif ACTION_SPACE_TYPE == "discrete_5":
+        elif settings.ACTION_SPACE_TYPE == "discrete_5":
             self.action_space = spaces.Discrete(5) # 0: Sell 100%, 1: Sell 50%, 2: Hold, 3: Buy 50%, 4: Buy 100%
         else:
             raise ValueError("Invalid ACTION_SPACE_TYPE in settings.py")
@@ -73,7 +70,7 @@ class TradingEnv(gym.Env):
         # ---------------------------------------------------------
         # SCENARIO A: 3-ACTION SPACE (Conviction Trading)
         # ---------------------------------------------------------
-        if ACTION_SPACE_TYPE == "discrete_3":
+        if settings.ACTION_SPACE_TYPE == "discrete_3":
 
             if action == 1:  # Attempt to BUY ALL
                 if self.balance > 0:
@@ -105,12 +102,12 @@ class TradingEnv(gym.Env):
         # ---------------------------------------------------------
         # SCENARIO B: 5-ACTION SPACE (Scaling In/Out)
         # ---------------------------------------------------------
-        elif ACTION_SPACE_TYPE == "discrete_5":
+        elif settings.ACTION_SPACE_TYPE == "discrete_5":
 
             if action in [3, 4]: # Attempt to BUY (50% or 100%)
                 if self.balance > 0:
                     fraction = 1.0 if action == 4 else 0.5
-                    investment = (self.balance * fraction) * CASH_RISK_FRACTION
+                    investment = (self.balance * fraction) * settings.CASH_RISK_FRACTION
                     actual_buy_price = current_price * (1 + slippage_pct)
                     new_shares = investment / actual_buy_price
 
@@ -158,14 +155,14 @@ class TradingEnv(gym.Env):
         step_return = (current_portfolio_value - self.prev_portfolio_value) / self.prev_portfolio_value
 
         # 🟢 SUB-CHECKPOINT 2.4: CONFIGURABLE REWARD LOGIC
-        if REWARD_STRATEGY == "absolute_asymmetric":
+        if settings.REWARD_STRATEGY == "absolute_asymmetric":
             # 2x penalty on losses to teach capital preservation
             if step_return > 0:
                 reward += step_return * 100
             else:
                 reward += step_return * 200
 
-        elif REWARD_STRATEGY == "pure_pnl":
+        elif settings.REWARD_STRATEGY == "pure_pnl":
             # Just reward raw profit 1:1 (A baseline strategy)
             reward += step_return * 100
 

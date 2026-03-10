@@ -8,6 +8,7 @@ __MACOSX
 # Jupiter Notebook #
 .pytest_cache
 __pycache__
+*/__pycache__/*
 *checkpoint.ipynb
 *.ipynb_checkpoints
 
@@ -34,4 +35,3 @@ mlruns
 # Streamlit
 secrets
 secrets.toml
-

@@ -18,8 +18,8 @@ def test_environment_math():
     settings.CASH_RISK_FRACTION = 1.0 # Use 100% of cash to make math easy
 
     # 2. FAKE DATA: We control the future.
-    df = pd.DataFrame({'Close': [100.0, 110.0, 99.0]})
-    features = np.zeros((3, 16))
+    df = pd.DataFrame({'Close': [100.0, 110.0, 99.0, 105.0, 102.0]})
+    features = np.zeros((5, 16))
 
     env = TradingEnv(df, features)
     env.reset()
@@ -44,11 +44,13 @@ def test_environment_math():
     # ==========================================
     # 🧪 TEST 3: Asymmetric Reward Logic (Gains)
     # ==========================================
+    # 🟢 FIX: Capture the exact portfolio value BEFORE we step, to account for fees already paid!
+    prev_value = info['portfolio_value']
     _, reward, _, _, info = env.step(2)
 
-    expected_return = (info['portfolio_value'] - 10000.0) / 10000.0
+    expected_return = (info['portfolio_value'] - prev_value) / prev_value
     expected_reward = expected_return * 100
-    assert round(reward, 4) == round(expected_reward, 4), "Reward calculation failed!"
+    assert round(reward, 4) == round(expected_reward, 4), f"Reward calc failed! Expected {expected_reward}, Got {reward}"
     print(f"✅ TEST 3 PASSED: Positive reward calculated perfectly: +{reward:.2f}")
 
     # ==========================================
@@ -66,10 +68,9 @@ def test_environment_math():
     # 🧪 TEST 5: 5-Action Space (Partial Buys)
     # ==========================================
     settings.ACTION_SPACE_TYPE = "discrete_5"
-    env = TradingEnv(df, features) # Re-init to grab the new action space
+    env = TradingEnv(df, features)
     env.reset()
 
-    # Action 3 is "Light Buy" (50% of cash). Cash = $10,000. Price = $100.00.
     _, reward, _, _, info = env.step(3)
     expected_light_shares = 5000.0 / 100.05
     assert round(env.position, 4) == round(expected_light_shares, 4), "Partial Buy Math Failed!"

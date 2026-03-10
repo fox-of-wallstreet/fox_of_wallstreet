@@ -36,11 +36,34 @@ def run_training():
 
     # 2. Process Features & Scale (Saves the Scaler)
     train_df = add_technical_indicators(train_df)
-    features_list = [
-        'Log_Return', 'Volume_Z_Score', 'RSI', 'MACD_Hist', 'BB_Pct', 'ATR_Pct',
-        'QQQ_Ret', 'ARKK_Ret', 'Rel_Strength_QQQ', 'VIX_Level', 'TNX_Level',
-        'Sentiment_EMA', 'News_Intensity', 'Sin_Time', 'Cos_Time', 'Mins_to_Close'
+    base_features = [
+        'Log_Return',
+        'Volume_Z_Score',
+        'RSI',
+        'MACD_Hist',
+        'BB_Pct',
+        'ATR_Pct',
+        'Realized_Vol_Short',
+        'Realized_Vol_Long',
+        'Vol_Regime',
+        'Dist_MA_Fast',
+        'Dist_MA_Slow',
+        'QQQ_Ret',
+        'ARKK_Ret',
+        'Rel_Strength_QQQ',
+        'VIX_Z',
+        'TNX_Z',
+        'Sentiment_EMA',
+        'News_Intensity'
     ]
+
+    if settings.TIMEFRAME == "1h":
+        features_list = base_features + ['Sin_Time', 'Cos_Time', 'Mins_to_Close']
+    elif settings.TIMEFRAME == "1d":
+        features_list = base_features
+    else:
+        raise ValueError(f"Unsupported TIMEFRAME: {settings.TIMEFRAME}")
+
     scaled_features = prepare_features(train_df, features_list, is_training=True)
 
     # 3. Build Environment with 5-Hour Memory Buffer

@@ -1,0 +1,50 @@
+import os
+
+# ==========================================
+# 🎛️ THE CONTROL ROOM (Team Settings)
+# ==========================================
+
+# 1. ASSET & TIMEFRAME
+SYMBOL = "TSLA"
+TIMEFRAME = "1h"       # Options: "1h" (Hourly) or "1d" (Daily)
+
+# 2. ACTION SPACE (The AI's Trading Style)
+# Options:
+# "discrete_3" (0=Sell All, 1=Buy All, 2=Hold)
+# "discrete_5" (0=Sell All, 1=Sell Half, 2=Hold, 3=Buy Half, 4=Buy All)
+ACTION_SPACE_TYPE = "discrete_5"
+
+# 3. REWARD FUNCTION (The AI's Psychology)
+# Options:
+# "absolute_asymmetric" (Punishes losses 2x harder than gains - capital preservation)
+# "pure_pnl" (Rewards/punishes 1:1 based strictly on profit/loss)
+REWARD_STRATEGY = "absolute_asymmetric"
+
+# 4. DATE SWAPPING (Train on New, Test on Old?)
+TRAIN_START_DATE = "2023-01-01"
+TRAIN_END_DATE   = "2025-10-31"
+
+TEST_START_DATE  = "2025-11-01"
+TEST_END_DATE    = "2026-03-06"
+
+# 5. TRAINING HYPERPARAMETERS
+TOTAL_TIMESTEPS = 1_000_000
+CASH_RISK_FRACTION = 0.99
+STOP_LOSS_PCT = 0.10     # Reference variables for standard boundaries
+TAKE_PROFIT_PCT = 0.20
+
+# ==========================================
+# 📦 ARTIFACT TRACKING (Auto-Naming Vault)
+# ==========================================
+# Example output: ppo_TSLA_1h_discrete_3_v1
+EXPERIMENT_NAME = f"ppo_{SYMBOL}_{TIMEFRAME}_{ACTION_SPACE_TYPE}_v1"
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ARTIFACT_DIR = os.path.join(BASE_DIR, "artifacts", EXPERIMENT_NAME)
+
+# Automatically create the safe vault for this specific experiment
+os.makedirs(ARTIFACT_DIR, exist_ok=True)
+
+MODEL_PATH = os.path.join(ARTIFACT_DIR, "model")
+SCALER_PATH = os.path.join(ARTIFACT_DIR, "scaler.pkl")
+METADATA_PATH = os.path.join(ARTIFACT_DIR, "metadata.json")

@@ -33,6 +33,34 @@ CASH_RISK_FRACTION = 0.99
 STOP_LOSS_PCT = 0.10     # Reference variables for standard boundaries
 TAKE_PROFIT_PCT = 0.20
 
+# 6. FEATURE ENGINEERING PARAMETERS
+if TIMEFRAME == "1h":
+    RSI_WINDOW = 14
+    MACD_FAST = 12
+    MACD_SLOW = 26
+    MACD_SIGNAL = 9
+    VOLATILITY_WINDOW = 20
+
+    SHORT_VOL_WINDOW = 24      # 24 hours
+    LONG_VOL_WINDOW = 120      # 5 trading days of hourly bars
+    MA_FAST_WINDOW = 20
+    MA_SLOW_WINDOW = 50
+
+elif TIMEFRAME == "1d":
+    RSI_WINDOW = 14
+    MACD_FAST = 12
+    MACD_SLOW = 26
+    MACD_SIGNAL = 9
+    VOLATILITY_WINDOW = 20
+
+    SHORT_VOL_WINDOW = 5       # 5 trading days
+    LONG_VOL_WINDOW = 20       # 1 trading month
+    MA_FAST_WINDOW = 20
+    MA_SLOW_WINDOW = 50
+
+else:
+    raise ValueError(f"Unsupported TIMEFRAME: {TIMEFRAME}")
+
 # ==========================================
 # 📦 ARTIFACT TRACKING (Auto-Naming Vault)
 # ==========================================

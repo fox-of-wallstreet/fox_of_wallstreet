@@ -24,6 +24,7 @@ __pycache__
 *.zip
 mlruns
 *.sqlite
+*.db
 # IDE #
 *.vscode
 

@@ -5,7 +5,6 @@ import optuna
 from optuna.pruners import MedianPruner
 from optuna.samplers import TPESampler
 from stable_baselines3 import PPO
-from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
 from sklearn.preprocessing import RobustScaler
@@ -17,52 +16,14 @@ from core.processor import add_technical_indicators
 from core.environment import TradingEnv
 from core.tools import fnline, get_features_list, get_stack_size
 
+
 # ==========================================
 # 1. Helpers
 # ==========================================
-def get_features_list():
-    base_features = [
-        'Log_Return',
-        'Volume_Z_Score',
-        'RSI',
-        'MACD_Hist',
-        'BB_Pct',
-        'ATR_Pct',
-        'Realized_Vol_Short',
-        'Realized_Vol_Long',
-        'Vol_Regime',
-        'Dist_MA_Fast',
-        'Dist_MA_Slow',
-        'QQQ_Ret',
-        'ARKK_Ret',
-        'Rel_Strength_QQQ',
-        'VIX_Z',
-        'TNX_Z',
-        'Sentiment_EMA',
-        'News_Intensity'
-    ]
-
-    if settings.TIMEFRAME == "1h":
-        return base_features + ['Sin_Time', 'Cos_Time', 'Mins_to_Close']
-    elif settings.TIMEFRAME == "1d":
-        return base_features
-    else:
-        raise ValueError(f"Unsupported TIMEFRAME: {settings.TIMEFRAME}")
-
-
-def get_stack_size():
-    if settings.TIMEFRAME == "1h":
-        return 5
-    elif settings.TIMEFRAME == "1d":
-        return 10
-    else:
-        raise ValueError(f"Unsupported TIMEFRAME: {settings.TIMEFRAME}")
-
-
 def scale_train_valid(train_df, valid_df, features_list):
     """
-    Fit scaler on training subset only, transform both train and validation.
-    This avoids overwriting the production scaler artifact.
+    Fit scaler on training subset only, then transform both train and validation.
+    This avoids overwriting the real scaler artifact used by train/backtest/live.
     """
     scaler = RobustScaler()
 
@@ -88,6 +49,7 @@ def get_study_name():
     reward_tag = "asym" if settings.REWARD_STRATEGY == "absolute_asymmetric" else "pnl"
     env_tag = f"pen{int(settings.TRADE_PENALTY_FULL * 1000)}"
     return f"ppo_{settings.SYMBOL.lower()}_{settings.TIMEFRAME}_{action_tag}_{reward_tag}_{env_tag}"
+
 
 def run_validation_backtest(model, env):
     """
@@ -159,22 +121,35 @@ full_train_df = add_technical_indicators(full_train_df)
 if full_train_df.empty:
     raise ValueError("❌ Training dataframe is empty after preprocessing. Check rolling windows and timeframe settings.")
 
+# Chronological split: first 80% train, last 20% validation
+split_idx = int(len(full_train_df) * 0.8)
+train_df = full_train_df.iloc[:split_idx].copy().reset_index(drop=True)
+valid_df = full_train_df.iloc[split_idx:].copy().reset_index(drop=True)
+
+if train_df.empty or valid_df.empty:
+    raise ValueError("❌ Train/validation split produced an empty subset.")
+
 features_list = get_features_list()
 stack_size = get_stack_size()
-    
-scaled_features = prepare_features(train_df, features_list, is_training=True)
+
+train_scaled, valid_scaled = scale_train_valid(train_df, valid_df, features_list)
+
+print(fnline(), f"📊 Optimization train rows: {len(train_df)}")
+print(fnline(), f"📊 Optimization valid rows: {len(valid_df)}")
+print(fnline(), f"📊 Features used: {len(features_list)}")
+print(fnline(), f"📊 Stack size: {stack_size}")
 
 
 # ==========================================
 # 3. Optuna Search Space
 # ==========================================
 def sample_ppo_params(trial: optuna.Trial):
-    """Suggest PPO hyperparameters."""
+    """Suggest PPO hyperparameters within safer bounds."""
     return {
-            "learning_rate": trial.suggest_float("learning_rate", 1e-5, 5e-4, log=True),
-            "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256]),
-            "gamma": trial.suggest_float("gamma", 0.95, 0.999, log=True),
-            "ent_coef": trial.suggest_float("ent_coef", 1e-4, 5e-3, log=True)
+        "learning_rate": trial.suggest_float("learning_rate", 1e-5, 5e-4, log=True),
+        "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256]),
+        "gamma": trial.suggest_float("gamma", 0.95, 0.999, log=True),
+        "ent_coef": trial.suggest_float("ent_coef", 1e-4, 5e-3, log=True),
     }
 
 
@@ -190,21 +165,14 @@ def objective(trial: optuna.Trial):
     model = PPO("MlpPolicy", train_env, verbose=0, **hyperparams)
 
     try:
+        # Longer than 20k to reduce short-horizon bias
         model.learn(total_timesteps=30000)
 
         final_value, total_return, max_drawdown, trade_count = run_validation_backtest(model, valid_env)
 
-        # Option A: pure return
-        #return total_return
-
-        # Option B: return with drawdown penalty
-        # return total_return - 0.5 * abs(max_drawdown)
-
-        # Option C: return with drawdown and trade penalty
-        # return total_return - 0.5 * abs(max_drawdown) - 0.02 * trade_count
-
-        # Option D: Validation total return with a mild drawdown penalty
-        return total_return - 0.3 * abs(max_drawdown)
+        # Validation return with mild drawdown penalty
+        score = total_return - 0.3 * abs(max_drawdown)
+        return score
 
     except Exception as e:
         print(fnline(), f"⚠️ Trial failed: {e}")
@@ -234,12 +202,14 @@ def run_optimization():
 
     study.optimize(objective, n_trials=20)
 
-    print(fnline(), "\n🏆 OPTIMIZATION COMPLETE 🏆")
+    print(fnline(), "🏆 OPTIMIZATION COMPLETE 🏆")
     print(fnline(), f"✅ Study saved to {db_path}")
-    print(fnline(), "Best Trial Score (Mean Reward):", study.best_value)
+    print(fnline(), f"Study name: {study_name}")
+    print(fnline(), f"Best Trial Score (validation score): {study.best_value}")
     print(fnline(), "Best Hyperparameters:")
     for key, value in study.best_trial.params.items():
         print(fnline(), f"    {key}: {value}")
+
 
 if __name__ == "__main__":
     run_optimization()

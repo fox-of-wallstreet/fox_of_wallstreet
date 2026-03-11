@@ -1,5 +1,6 @@
 raw_data/
 .env
+artifacts/
 
 # OS generated files #
 ######################

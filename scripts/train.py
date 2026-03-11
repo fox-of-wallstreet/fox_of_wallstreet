@@ -36,6 +36,10 @@ def run_training():
 
     # 2. Process Features & Scale (Saves the Scaler)
     train_df = add_technical_indicators(train_df)
+
+    if train_df.empty:
+      raise ValueError("Training dataframe is empty after preprocessing. Check date split and rolling windows.")
+
     base_features = [
         'Log_Return',
         'Volume_Z_Score',
@@ -69,9 +73,28 @@ def run_training():
     # 3. Build Environment with 5-Hour Memory Buffer
     base_env = TradingEnv(df=train_df, features=scaled_features)
     vec_env = DummyVecEnv([lambda: base_env])
-    env = VecFrameStack(vec_env, n_stack=5)
+
+    if settings.TIMEFRAME == "1h":
+        stack_size = 5
+    elif settings.TIMEFRAME == "1d":
+        stack_size = 10
+    else:
+        raise ValueError(f"Unsupported TIMEFRAME: {settings.TIMEFRAME}")
+
+    env = VecFrameStack(vec_env, n_stack=stack_size)
+    #env = VecFrameStack(vec_env, n_stack=5)
 
     # 4. Train Brain
+    model = PPO(
+    "MlpPolicy",
+    env,
+    verbose=1,
+    learning_rate=settings.PPO_LEARNING_RATE,
+    batch_size=settings.PPO_BATCH_SIZE,
+    gamma=settings.PPO_GAMMA,
+    ent_coef=settings.PPO_ENT_COEF
+)
+
     model = PPO("MlpPolicy", env, verbose=1, learning_rate=0.0003, ent_coef=0.01)
     model.learn(total_timesteps=settings.TOTAL_TIMESTEPS)
 

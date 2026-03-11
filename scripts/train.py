@@ -25,7 +25,7 @@ def run_training():
     # 1. Load Data
     csv_path = f"data/{settings.SYMBOL.lower()}_{settings.TIMEFRAME}_hybrid.csv"
     if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"❌ Cannot find {csv_path}. Run data_engine.py first!")
+        raise FileNotFoundError(f"{fnline()} ❌ Cannot find {csv_path}. Run data_engine.py first!")
 
     df = pd.read_csv(csv_path)
     df['Date'] = pd.to_datetime(df['Date'], utc=True)
@@ -39,7 +39,7 @@ def run_training():
     train_df = add_technical_indicators(train_df)
 
     if train_df.empty:
-      raise ValueError("Training dataframe is empty after preprocessing. Check date split and rolling windows.")
+        raise ValueError(f"{fnline()} Training dataframe is empty after preprocessing. Check date split and rolling windows.")
 
     features_list = get_features_list()
 

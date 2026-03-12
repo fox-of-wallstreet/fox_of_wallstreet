@@ -1,10 +1,12 @@
-'''
-Missing module docstring.
-'''
+"""
+Train one PPO trading agent and save its artifacts.
+"""
 
 import os
 import sys
 import json
+from datetime import datetime, timezone
+
 import pandas as pd
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
@@ -16,81 +18,173 @@ from core.processor import add_technical_indicators, prepare_features
 from core.environment import TradingEnv
 from core.tools import fnline, get_features_list, get_stack_size
 
+
 def run_training():
-    '''
-    Missing function or method docstring.
-    '''
+    """
+    Train a PPO agent on the configured training period and save model metadata.
+    """
     print(fnline(), f"🚀 INITIATING TRAINING: {settings.EXPERIMENT_NAME}")
 
-    # 1. Load Data
+    # 1. Load raw market + news data
     csv_path = f"data/{settings.SYMBOL.lower()}_{settings.TIMEFRAME}_hybrid.csv"
     if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"{fnline()} ❌ Cannot find {csv_path}. Run data_engine.py first!")
+        raise FileNotFoundError(
+            f"{fnline()} ❌ Cannot find {csv_path}. Run data_engine.py first!"
+        )
 
-    df = pd.read_csv(csv_path)
-    df['Date'] = pd.to_datetime(df['Date'], utc=True)
+    df_all = pd.read_csv(csv_path)
+    df_all["Date"] = pd.to_datetime(df_all["Date"], utc=True)
 
-    # Slice to Training Dates
-    mask = (df['Date'] >= pd.to_datetime(settings.TRAIN_START_DATE, utc=True)) & (df['Date'] <= pd.to_datetime(settings.TRAIN_END_DATE, utc=True))
-    train_df = df.loc[mask].copy().reset_index(drop=True)
-    print(fnline(), f"📅 Training Data: {len(train_df)} rows from {settings.TRAIN_START_DATE} to {settings.TRAIN_END_DATE}")
+    # 2. Slice to training dates
+    train_mask = (
+        (df_all["Date"] >= pd.to_datetime(settings.TRAIN_START_DATE, utc=True))
+        & (df_all["Date"] <= pd.to_datetime(settings.TRAIN_END_DATE, utc=True))
+    )
+    train_df = df_all.loc[train_mask].copy().reset_index(drop=True)
 
-    # 2. Process Features & Scale (Saves the Scaler)
-    train_df = add_technical_indicators(train_df)
+    raw_rows_loaded = len(train_df)
+
+    print(
+        fnline(),
+        f"📅 Training Data: {raw_rows_loaded} rows from "
+        f"{settings.TRAIN_START_DATE} to {settings.TRAIN_END_DATE}"
+    )
 
     if train_df.empty:
-        raise ValueError(f"{fnline()} Training dataframe is empty after preprocessing. Check date split and rolling windows.")
+        raise ValueError(
+            f"{fnline()} ❌ Training dataframe is empty after date filtering."
+        )
+
+    # 3. Feature engineering
+    train_df = add_technical_indicators(train_df)
+    rows_after_feature_engineering = len(train_df)
+
+    if train_df.empty:
+        raise ValueError(
+            f"{fnline()} ❌ Training dataframe is empty after preprocessing. "
+            "Check date split and rolling windows."
+        )
+
+    print(
+        fnline(),
+        f"📈 Rows after feature engineering: {rows_after_feature_engineering}"
+    )
+
+    # Current train.py does not use a separate validation split yet
+    train_rows = len(train_df)
+    validation_rows = 0
+    total_rows_used = train_rows + validation_rows
 
     features_list = get_features_list()
-
-    scaled_features = prepare_features(train_df, features_list, is_training=True)
-
-    # 3. Build Environment with 5-Hour Memory Buffer
-    base_env = TradingEnv(df=train_df, features=scaled_features)
-    vec_env = DummyVecEnv([lambda: base_env])
-
     stack_size = get_stack_size()
 
+    # 4. Scale features using the training set and save the scaler
+    scaled_features = prepare_features(train_df, features_list, is_training=True)
+
+    # 5. Build vectorized RL environment
+    base_env = TradingEnv(df=train_df, features=scaled_features)
+    vec_env = DummyVecEnv([lambda: base_env])
     env = VecFrameStack(vec_env, n_stack=stack_size)
-    #env = VecFrameStack(vec_env, n_stack=5)
 
-    # 4. Train Brain
+    # 6. Train PPO agent
     model = PPO(
-    "MlpPolicy",
-    env,
-    verbose=1,
-    learning_rate=settings.PPO_LEARNING_RATE,
-    batch_size=settings.PPO_BATCH_SIZE,
-    gamma=settings.PPO_GAMMA,
-    ent_coef=settings.PPO_ENT_COEF
-)
+        policy="MlpPolicy",
+        env=env,
+        verbose=1,
+        learning_rate=settings.PPO_LEARNING_RATE,
+        batch_size=settings.PPO_BATCH_SIZE,
+        gamma=settings.PPO_GAMMA,
+        ent_coef=settings.PPO_ENT_COEF,
+        seed=settings.RANDOM_SEED,
+    )
 
-    model = PPO("MlpPolicy", env, verbose=1, learning_rate=0.0003, ent_coef=0.01)
     model.learn(total_timesteps=settings.TOTAL_TIMESTEPS)
 
-    # 5. Save Model
+    # 7. Save trained model
     model.save(settings.MODEL_PATH)
     print(fnline(), f"🧠 Model saved to {settings.MODEL_PATH}")
 
-    # 6. Generate MLOps Metadata Receipt
+    # 8. Save metadata receipt
+    timesteps_per_train_row = (
+        settings.TOTAL_TIMESTEPS / train_rows if train_rows > 0 else None
+    )
+
     metadata = {
-        "Experiment_Name": settings.EXPERIMENT_NAME,
-        "Symbol": settings.SYMBOL,
-        "Timeframe": settings.TIMEFRAME,
-        "Action_Space": settings.ACTION_SPACE_TYPE,
-        "Reward_Strategy": settings.REWARD_STRATEGY,
-        "Train_Dates": f"{settings.TRAIN_START_DATE} to {settings.TRAIN_END_DATE}",
-        "Test_Dates": f"{settings.TEST_START_DATE} to {settings.TEST_END_DATE}",
-        "Total_Timesteps": settings.TOTAL_TIMESTEPS,
-        "Cash_Risk_Fraction": settings.CASH_RISK_FRACTION,
-        "Features_Used": features_list
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "experiment": {
+            "experiment_name": settings.EXPERIMENT_NAME,
+            "symbol": settings.SYMBOL,
+            "timeframe": settings.TIMEFRAME,
+            "action_space_type": settings.ACTION_SPACE_TYPE,
+            "reward_strategy": settings.REWARD_STRATEGY,
+            "random_seed": settings.RANDOM_SEED,
+            "experiment_version": settings.EXPERIMENT_VERSION,
+        },
+        "data_split": {
+            "train_start_date": settings.TRAIN_START_DATE,
+            "train_end_date": settings.TRAIN_END_DATE,
+            "test_start_date": settings.TEST_START_DATE,
+            "test_end_date": settings.TEST_END_DATE,
+        },
+        "dataset_statistics": {
+            "raw_rows_loaded": raw_rows_loaded,
+            "rows_after_feature_engineering": rows_after_feature_engineering,
+            "train_rows": train_rows,
+            "validation_rows": validation_rows,
+            "total_rows_used": total_rows_used,
+        },
+        "training": {
+            "total_timesteps": settings.TOTAL_TIMESTEPS,
+            "timesteps_per_train_row": timesteps_per_train_row,
+            "cash_risk_fraction": settings.CASH_RISK_FRACTION,
+            "stop_loss_pct": settings.STOP_LOSS_PCT,
+            "take_profit_pct": settings.TAKE_PROFIT_PCT,
+            "max_bars_normalization": settings.MAX_BARS_NORMALIZATION,
+        },
+        "feature_engineering": {
+            "rsi_window": settings.RSI_WINDOW,
+            "macd_fast": settings.MACD_FAST,
+            "macd_slow": settings.MACD_SLOW,
+            "macd_signal": settings.MACD_SIGNAL,
+            "volatility_window": settings.VOLATILITY_WINDOW,
+            "short_vol_window": settings.SHORT_VOL_WINDOW,
+            "long_vol_window": settings.LONG_VOL_WINDOW,
+            "ma_fast_window": settings.MA_FAST_WINDOW,
+            "ma_slow_window": settings.MA_SLOW_WINDOW,
+            "features_used": features_list,
+            "n_features": len(features_list),
+            "stack_size": stack_size,
+        },
+        "environment": {
+            "initial_balance": settings.INITIAL_BALANCE,
+            "slippage_pct": settings.SLIPPAGE_PCT,
+            "trade_penalty_full": settings.TRADE_PENALTY_FULL,
+            "trade_penalty_half": settings.TRADE_PENALTY_HALF,
+            "invalid_action_penalty": settings.INVALID_ACTION_PENALTY,
+            "bankruptcy_penalty": settings.BANKRUPTCY_PENALTY,
+            "min_position_threshold": settings.MIN_POSITION_THRESHOLD,
+            "max_bars_in_trade_norm": settings.MAX_BARS_IN_TRADE_NORM,
+        },
+        "ppo_hyperparameters": {
+            "learning_rate": settings.PPO_LEARNING_RATE,
+            "batch_size": settings.PPO_BATCH_SIZE,
+            "gamma": settings.PPO_GAMMA,
+            "ent_coef": settings.PPO_ENT_COEF,
+        },
+        "artifacts": {
+            "artifact_dir": settings.ARTIFACT_DIR,
+            "model_path": settings.MODEL_PATH,
+            "scaler_path": settings.SCALER_PATH,
+            "metadata_path": settings.METADATA_PATH,
+        },
     }
 
     with open(settings.METADATA_PATH, "w") as f:
         json.dump(metadata, f, indent=4)
 
     print(fnline(), f"🧾 Metadata receipt generated at {settings.METADATA_PATH}")
-    print(fnline(), f"✅ Training Complete. All artifacts secured in Vault: {settings.ARTIFACT_DIR}")
+    print(fnline(), f"✅ Training complete. All artifacts secured in Vault: {settings.ARTIFACT_DIR}")
+
 
 if __name__ == "__main__":
     run_training()

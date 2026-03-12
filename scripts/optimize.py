@@ -16,6 +16,8 @@ from core.processor import add_technical_indicators
 from core.environment import TradingEnv
 from core.tools import fnline, get_features_list, get_stack_size
 
+# ! Set the number of timesteps for this ppo hyperparameter optimization training
+OPT_TIMESTEPS = 100_000
 
 # ==========================================
 # 1. Helpers
@@ -166,7 +168,7 @@ def objective(trial: optuna.Trial):
 
     try:
         # Longer than 20k to reduce short-horizon bias
-        model.learn(total_timesteps=30000)
+        model.learn(total_timesteps=OPT_TIMESTEPS)
 
         final_value, total_return, max_drawdown, trade_count = run_validation_backtest(model, valid_env)
 

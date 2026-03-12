@@ -53,3 +53,33 @@ def get_stack_size():
         return 10
     else:
         raise ValueError(f"Unsupported TIMEFRAME: {settings.TIMEFRAME}")
+
+# function to build the name of the artifacts folder specifing the model/agent setup
+def build_experiment_name():
+    symbol = settings.SYMBOL
+    tf = settings.TIMEFRAME
+
+    if settings.ACTION_SPACE_TYPE == "discrete_3":
+        action = "d3"
+    elif settings.ACTION_SPACE_TYPE == "discrete_5":
+        action = "d5"
+    else:
+        raise ValueError(f"Unsupported ACTION_SPACE_TYPE: {settings.ACTION_SPACE_TYPE}")
+
+    if settings.REWARD_STRATEGY == "absolute_asymmetric":
+        reward = "asym"
+    elif settings.REWARD_STRATEGY == "pure_pnl":
+        reward = "pnl"
+    else:
+        raise ValueError(f"Unsupported REWARD_STRATEGY: {settings.REWARD_STRATEGY}")
+
+    timesteps = settings.TOTAL_TIMESTEPS
+    if timesteps >= 1_000_000:
+        t_tag = f"t{timesteps//1_000_000}M"
+    else:
+        t_tag = f"t{timesteps//1000}k"
+
+    seed_tag = f"s{settings.RANDOM_SEED}"
+    version_tag = f"v{settings.EXPERIMENT_VERSION}"
+
+    return f"ppo_{symbol}_{tf}_{action}_{reward}_{t_tag}_{seed_tag}_{version_tag}"

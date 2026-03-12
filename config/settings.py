@@ -1,4 +1,5 @@
 import os
+from core import tools
 
 # ==========================================
 # 🎛️ THE CONTROL ROOM (Team Settings)
@@ -12,7 +13,7 @@ TIMEFRAME = "1h"       # Options: "1h" (Hourly) or "1d" (Daily)
 # Options:
 # "discrete_3" (0=Sell All, 1=Buy All, 2=Hold)
 # "discrete_5" (0=Sell All, 1=Sell Half, 2=Hold, 3=Buy Half, 4=Buy All)
-ACTION_SPACE_TYPE = "discrete_3"
+ACTION_SPACE_TYPE = "discrete_5"
 
 # 3. REWARD FUNCTION (The AI's Psychology)
 # Options:
@@ -20,31 +21,26 @@ ACTION_SPACE_TYPE = "discrete_3"
 # "pure_pnl" (Rewards/punishes 1:1 based strictly on profit/loss)
 REWARD_STRATEGY = "absolute_asymmetric"
 
-# 4. DATE SWAPPING (Train on New, Test on Old?)
-#TRAIN_START_DATE = "2023-01-01"
-#TRAIN_END_DATE   = "2025-10-31"
-
-#TEST_START_DATE  = "2025-11-01"
-#TEST_END_DATE    = "2026-03-10"
-
-
-## Hard coded dates -> if 1d, than trained with much less data (1/6th)
-
+# 4. DATA SPLIT DESIGN
+# Flexible to balance the amount of training data for 1h and 1d.
 TRAIN_END_DATE = "2025-10-31"
 TEST_START_DATE = "2025-11-01"
-TEST_END_DATE = "2026-03-10"
+TEST_END_DATE = "2026-03-11"
 
 if TIMEFRAME == "1h":
     TRAIN_START_DATE = "2023-01-01"
 elif TIMEFRAME == "1d":
     TRAIN_START_DATE = "2018-01-01"
+else:
+    raise ValueError(f"Unsupported TIMEFRAME: {TIMEFRAME}")
+
 
 # 5. TRAINING HYPERPARAMETERS
-TOTAL_TIMESTEPS = 100_000 #1_000_000
-CASH_RISK_FRACTION = 0.99
-STOP_LOSS_PCT = 0.10     # Reference variables for standard boundaries
-TAKE_PROFIT_PCT = 0.20
-MAX_BARS_NORMALIZATION = 100  # For hourly swing trading
+TOTAL_TIMESTEPS = 200_000
+CASH_RISK_FRACTION = 0.75 # how much of the portfolio is deployed (0.99 old default -> very risky trading)
+STOP_LOSS_PCT = 0.10     # Maximum tolerated loss before forced exit. -> Reference variables for standard boundaries
+TAKE_PROFIT_PCT = 0.20   # Automatic exit when profit reached +20%.
+MAX_BARS_NORMALIZATION = 100  # For hourly swing trading but works for daily data as well
 
 # 6. FEATURE ENGINEERING PARAMETERS
 if TIMEFRAME == "1h":
@@ -87,28 +83,26 @@ MIN_POSITION_THRESHOLD = 1e-8
 MAX_BARS_IN_TRADE_NORM = 100.0
 
 # 8. PPO DEFAULT HYPERPARAMETERS
-PPO_LEARNING_RATE = 0.0003
-PPO_BATCH_SIZE = 64
-PPO_GAMMA = 0.99
-PPO_ENT_COEF = 0.01
+PPO_LEARNING_RATE = 0.0007
+PPO_BATCH_SIZE = 128
+PPO_GAMMA = 0.91
+PPO_ENT_COEF = 0.0012
 
+
+# 9. Optional: Create an evaluation plot when running backtest.py
+PLOT_BACKTEST = True
+
+# 10. Experiment naming settings
+RANDOM_SEED = 42
+EXPERIMENT_VERSION = 2
+
+OPTUNA_STUDY_VERSION = "v2"
 
 # ==========================================
 # 📦 ARTIFACT TRACKING (Auto-Naming Vault)
 # ==========================================
-ACTION_TAG = "d5" if ACTION_SPACE_TYPE == "discrete_5" else "d3"
-REWARD_TAG = "asym" if REWARD_STRATEGY == "absolute_asymmetric" else "pnl"
-ENV_TAG = f"pen{int(TRADE_PENALTY_FULL * 1000)}"
-PPO_TAG = (
-    f"lr{str(PPO_LEARNING_RATE).replace('.', '')}_"
-    f"bs{PPO_BATCH_SIZE}_"
-    f"g{str(PPO_GAMMA).replace('.', '')}"
-)
-VERSION = "2"
-OPTUNA_STUDY_VERSION = "v2" # set for a specific OPTUNA study version as used in optimize.py
 
-# Example: ppo_TSLA_1h_d5_asym_pen10_lr00003_v1
-EXPERIMENT_NAME = f"ppo_{SYMBOL}_{TIMEFRAME}_{ACTION_TAG}_{REWARD_TAG}_{ENV_TAG}_{PPO_TAG}_v{VERSION}"
+EXPERIMENT_NAME = tools.build_experiment_name()
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ARTIFACT_DIR = os.path.join(BASE_DIR, "artifacts", EXPERIMENT_NAME)
@@ -118,3 +112,4 @@ os.makedirs(ARTIFACT_DIR, exist_ok=True)
 MODEL_PATH = os.path.join(ARTIFACT_DIR, "model")
 SCALER_PATH = os.path.join(ARTIFACT_DIR, "scaler.pkl")
 METADATA_PATH = os.path.join(ARTIFACT_DIR, "metadata.json")
+BACKTEST_SUMMARY_PATH = os.path.join(ARTIFACT_DIR, "backtest_summary.json")

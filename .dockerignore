@@ -1,0 +1,39 @@
+.git
+raw_data/
+.env
+artifacts/
+
+# OS generated files #
+######################
+.DS_Store
+__MACOSX
+# Jupiter Notebook #
+.pytest_cache
+__pycache__
+*/__pycache__/*
+*checkpoint.ipynb
+*.ipynb_checkpoints
+
+# inteliJ #
+.idea
+*.gz
+*PKG-INFO
+*.egg-info
+*.csv
+05-ML/**/*.txt
+06-Deep-Learning/**/*.txt
+*.zip
+mlruns
+*.sqlite
+*.db
+# IDE #
+*.vscode
+
+# Specific Challenges
+
+# Challengify - test challengification files
+*_challengify*
+
+# Streamlit
+secrets
+secrets.toml

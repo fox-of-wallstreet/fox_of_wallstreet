@@ -35,3 +35,7 @@ alpaca-py
 
 dotenv
 
+# Docker
+fastapi
+uvicorn[standard]
+

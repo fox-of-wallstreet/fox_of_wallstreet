@@ -18,6 +18,7 @@ from core.tools import fnline, get_features_list, get_stack_size
 
 # ! Set the number of timesteps for this ppo hyperparameter optimization training
 OPT_TIMESTEPS = 100_000
+N_TRAILS = 5 # number of trails to find best hyperparameters
 
 # ==========================================
 # 1. Helpers
@@ -148,9 +149,9 @@ print(fnline(), f"📊 Stack size: {stack_size}")
 def sample_ppo_params(trial: optuna.Trial):
     """Suggest PPO hyperparameters within safer bounds."""
     return {
-        "learning_rate": trial.suggest_float("learning_rate", 1e-5, 5e-4, log=True),
+        "learning_rate": trial.suggest_float("learning_rate", 5e-5, 1e-3, log=True),
         "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256]),
-        "gamma": trial.suggest_float("gamma", 0.95, 0.999, log=True),
+        "gamma": trial.suggest_float("gamma", 0.90, 0.98),
         "ent_coef": trial.suggest_float("ent_coef", 1e-4, 5e-3, log=True),
     }
 
@@ -173,7 +174,10 @@ def objective(trial: optuna.Trial):
         final_value, total_return, max_drawdown, trade_count = run_validation_backtest(model, valid_env)
 
         # Validation return with mild drawdown penalty
-        score = total_return - 0.3 * abs(max_drawdown)
+        #score = total_return - 0.7 * abs(max_drawdown) # favors conservative behavior of agent
+        score = total_return - 0.3 * abs(max_drawdown) # Balance return and drawdown.
+        #score = total_return - 0.1 * abs(max_drawdown) # more agressive obj. func regarding trading
+
         return score
 
     except Exception as e:
@@ -202,7 +206,7 @@ def run_optimization():
         pruner=pruner
     )
 
-    study.optimize(objective, n_trials=20)
+    study.optimize(objective, n_trials=N_TRAILS)
 
     print(fnline(), "🏆 OPTIMIZATION COMPLETE 🏆")
     print(fnline(), f"✅ Study saved to {db_path}")

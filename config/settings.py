@@ -36,10 +36,10 @@ else:
 
 
 # 5. TRAINING HYPERPARAMETERS
-TOTAL_TIMESTEPS = 200_000
+TOTAL_TIMESTEPS = 250_000
 CASH_RISK_FRACTION = 0.75 # how much of the portfolio is deployed (0.99 old default -> very risky trading)
-STOP_LOSS_PCT = 0.10     # Maximum tolerated loss before forced exit. -> Reference variables for standard boundaries
-TAKE_PROFIT_PCT = 0.20   # Automatic exit when profit reached +20%.
+STOP_LOSS_PCT = 0.50     # Maximum tolerated loss before forced exit. -> Reference variables for standard boundaries
+TAKE_PROFIT_PCT = 0.50   # Automatic exit when profit reached +20%.
 MAX_BARS_NORMALIZATION = 100  # For hourly swing trading but works for daily data as well
 
 # 6. FEATURE ENGINEERING PARAMETERS
@@ -83,10 +83,10 @@ MIN_POSITION_THRESHOLD = 1e-8
 MAX_BARS_IN_TRADE_NORM = 100.0
 
 # 8. PPO DEFAULT HYPERPARAMETERS
-PPO_LEARNING_RATE = 0.0007
-PPO_BATCH_SIZE = 128
-PPO_GAMMA = 0.91
-PPO_ENT_COEF = 0.0012
+PPO_LEARNING_RATE = 0.0001 #0.0007 #how strongly the neural network weights change after each update
+PPO_BATCH_SIZE = 128 #number of sampled transitions used in one update step
+PPO_GAMMA = 0.96 #0.91 #how much the agent values future rewards relative to immediate rewards, near 1 agent becomes more long-term
+PPO_ENT_COEF = 0.001 #0.0012 # Entropy Coefficient,controls how much PPO is rewarded for keeping its action distribution exploratory/uncertain
 
 
 # 9. Optional: Create an evaluation plot when running backtest.py
@@ -94,9 +94,9 @@ PLOT_BACKTEST = True
 
 # 10. Experiment naming settings
 RANDOM_SEED = 42
-EXPERIMENT_VERSION = 2
+EXPERIMENT_VERSION = 1
 
-OPTUNA_STUDY_VERSION = "v2"
+OPTUNA_STUDY_VERSION = "v1"
 
 # ==========================================
 # 📦 ARTIFACT TRACKING (Auto-Naming Vault)

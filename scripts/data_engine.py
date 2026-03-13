@@ -1,18 +1,16 @@
-import os
-import time
-import yfinance as yf
-import pandas as pd
-import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from alpaca.data.historical.news import NewsClient
-from alpaca.data.requests import NewsRequest
-from tqdm import tqdm
-from dotenv import load_dotenv
+"""
+Downloads, validates, and saves raw historical market data from yfinance.
+Outputs a raw CSV checkpoint for downstream processing.
+"""
 
-# 🎛️ Connect to the Control Room
+import os
+import pandas as pd
+import yfinance as yf
+
 from config import settings
 from core.tools import fnline
 
+<<<<<<< HEAD
 # =========================
 # 1. ENV / MODEL SETUP
 # =========================
@@ -179,28 +177,57 @@ def get_paginated_news_sentiment(symbol, start_date, end_date):
             start=final_start,
             end=current_end,
             limit=500
+=======
+REQUIRED_PRICE_COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
+
+
+def download_data(symbol: str, timeframe: str) -> str:
+    """
+    Download OHLCV data, validate it, filter it to the experiment window,
+    and save it as the raw prices CSV checkpoint.
+    """
+    if timeframe not in settings.VALID_TIMEFRAMES:
+        raise ValueError(
+            f"❌ Invalid timeframe '{timeframe}'. Expected one of {settings.VALID_TIMEFRAMES}."
+>>>>>>> 7daa4dace0a1ce7ecaa224d0aedcd641f8074485
         )
 
-        try:
-            response = client.get_news(request_params)
-            batch_df = response.df.reset_index()
+    print(f"📥 Downloading {timeframe} data for {symbol}...")
 
-            if batch_df.empty:
-                break
+    period = "730d" if timeframe == "1h" else "max"
+    data = yf.download(symbol, period=period, interval=timeframe, progress=False)
 
-            all_news_dfs.append(batch_df)
+    if data.empty:
+        raise ValueError(f"❌ No data found for {symbol}. Check symbol or internet connection.")
 
+<<<<<<< HEAD
             current_total = sum(len(d) for d in all_news_dfs)
             print(fnline(), f"   -> Progress: {current_total} articles fetched...", end="\r")
+=======
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = [col[0] for col in data.columns]
+>>>>>>> 7daa4dace0a1ce7ecaa224d0aedcd641f8074485
 
-            oldest_time = batch_df["created_at"].min()
+    missing = [col for col in REQUIRED_PRICE_COLUMNS if col not in data.columns]
+    if missing:
+        raise ValueError(f"❌ Missing required columns from yfinance: {missing}")
 
+<<<<<<< HEAD
             if oldest_time <= start_date:
                 print(fnline(), f"\n✅ Reached start date: {start_date}")
                 break
+=======
+    if getattr(data.index, "tz", None) is not None:
+        data.index = data.index.tz_localize(None)
+>>>>>>> 7daa4dace0a1ce7ecaa224d0aedcd641f8074485
 
-            current_end = (oldest_time - pd.Timedelta(seconds=1)).isoformat()
+    data = data.reset_index()
+    if "Datetime" in data.columns:
+        data = data.rename(columns={"Datetime": "Date"})
+    elif "Date" not in data.columns:
+        raise ValueError("❌ Could not find a datetime column after download.")
 
+<<<<<<< HEAD
         except Exception as e:
             print(fnline(), f"\nAPI error during time-stepping: {e}")
             break
@@ -212,19 +239,30 @@ def get_paginated_news_sentiment(symbol, start_date, end_date):
     news_df = pd.concat(all_news_dfs, ignore_index=True)
     news_df = news_df.drop_duplicates(subset=["id"])
     print(fnline(), f"✅ Total unique articles collected: {len(news_df)}")
+=======
+    data["Date"] = pd.to_datetime(data["Date"])
+    data = data.sort_values("Date").drop_duplicates(subset=["Date"]).reset_index(drop=True)
 
-    sentiment_scores = []
-    for headline in tqdm(news_df["headline"], desc="🧠 FinBERT scoring"):
-        sentiment_scores.append(score_headline_finbert(headline))
+    start_date = pd.to_datetime(settings.TRAIN_START_DATE)
+    end_date = pd.to_datetime(settings.TEST_END_DATE)
 
-    news_df["Raw_Sentiment"] = sentiment_scores
-    news_df["Date"] = normalize_timestamp(news_df["created_at"])
+    data = data[(data["Date"] >= start_date) & (data["Date"] <= end_date)].copy()
+>>>>>>> 7daa4dace0a1ce7ecaa224d0aedcd641f8074485
 
-    hourly_sentiment = news_df.groupby("Date").agg(
-        Sentiment_EMA=("Raw_Sentiment", "mean"),
-        News_Intensity=("headline", "count")
-    ).reset_index()
+    if len(data) < settings.MIN_TRAIN_ROWS:
+        raise ValueError(
+            f"❌ Insufficient data: only {len(data)} rows available between "
+            f"{start_date.date()} and {end_date.date()}."
+        )
 
+    null_counts = data[REQUIRED_PRICE_COLUMNS + ["Date"]].isnull().sum()
+    if null_counts.any():
+        raise ValueError(f"❌ Null values found in raw price data:\n{null_counts[null_counts > 0]}")
+
+    os.makedirs(os.path.dirname(settings.RAW_PRICES_CSV), exist_ok=True)
+    data.to_csv(settings.RAW_PRICES_CSV, index=False)
+
+<<<<<<< HEAD
     return hourly_sentiment
 
 
@@ -262,7 +300,12 @@ def build_and_save_dataset(symbol=None, output_file=None):
     print(fnline(), f"📊 Final rows: {len(hybrid_df)}")
 
     return hybrid_df
+=======
+    print(f"✅ Raw prices saved to {settings.RAW_PRICES_CSV}")
+    print(f"📊 Total Rows: {len(data)}")
+    return settings.RAW_PRICES_CSV
+>>>>>>> 7daa4dace0a1ce7ecaa224d0aedcd641f8074485
 
 
 if __name__ == "__main__":
-    build_and_save_dataset()
+    download_data(symbol=settings.SYMBOL, timeframe=settings.TIMEFRAME)

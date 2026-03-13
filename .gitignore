@@ -2,6 +2,11 @@ raw_data/
 .env
 artifacts/
 
+# Project-generated outputs
+data/raw/
+data/intermediate/
+artifacts/
+
 # OS generated files #
 ######################
 .DS_Store

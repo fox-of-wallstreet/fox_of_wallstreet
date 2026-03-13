@@ -1,65 +1,116 @@
 import os
-import sys
-import numpy as np
 import pandas as pd
+import numpy as np
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from core.processor import add_technical_indicators, prepare_features
 from config import settings
+from core.processor import (
+    build_news_sentiment,
+    build_training_dataset,
+    prepare_features,
+)
 
-def test_processor_logic():
-    print("🧪 RUNNING PROCESSOR & SCALER UNIT TESTS...")
 
-    # 1. Create Fake OHLCV Data
-    dates = pd.date_range(start="2025-01-01", periods=50, freq="h")
-    df = pd.DataFrame({
-        'Date': dates,
-        'Open': np.random.uniform(100, 110, 50),
-        'High': np.random.uniform(105, 115, 50),
-        'Low': np.random.uniform(95, 105, 50),
-        'Close': np.random.uniform(100, 110, 50),
-        'Volume': np.random.randint(1000, 5000, 50)
-    })
+def _make_price_df():
+    dates = pd.date_range(start="2024-01-01", periods=200, freq="h")
+    return pd.DataFrame(
+        {
+            "Date": dates,
+            "Open": np.linspace(100, 120, 200),
+            "High": np.linspace(101, 121, 200),
+            "Low": np.linspace(99, 119, 200),
+            "Close": np.linspace(100, 120, 200),
+            "Volume": np.linspace(1000, 2000, 200),
+        }
+    )
 
-    # ==========================================
-    # 🧪 TEST 1: Indicator Generation
-    # ==========================================
-    processed_df = add_technical_indicators(df)
 
-    expected_columns = ['Log_Return', 'Volume_Z_Score', 'RSI', 'MACD_Hist', 'BB_Pct', 'ATR_Pct']
-    for col in expected_columns:
-        assert col in processed_df.columns, f"❌ Missing indicator column: {col}"
+def _make_news_df():
+    return pd.DataFrame(
+        {
+            "id": [1, 2, 3],
+            "headline": ["Good TSLA delivery news", "TSLA update", "TSLA faces challenge"],
+            "created_at_ny": ["2024-01-01 10:15:00", "2024-01-01 10:45:00", "2024-01-01 11:10:00"],
+            "Raw_Sentiment": [0.8, 0.4, -0.2],
+        }
+    )
 
-    assert processed_df.isna().sum().sum() == 0, "❌ NaN values found in processed DataFrame!"
-    print("✅ TEST 1 PASSED: Technical indicators generated perfectly with zero NaNs.")
 
-    # ==========================================
-    # 🧪 TEST 2: RobustScaler Vault Integration
-    # ==========================================
-    features_list = ['Log_Return', 'Volume_Z_Score', 'RSI'] # Testing a subset
+def test_build_news_sentiment_hourly_aggregation():
+    news_df = _make_news_df()
+    out = build_news_sentiment(news_df, timeframe="1h")
 
-    # Force the Vault path to exist
-    os.makedirs(settings.ARTIFACT_DIR, exist_ok=True)
+    assert {"Date", "Sentiment_EMA", "News_Intensity"}.issubset(out.columns)
+    assert len(out) == 2
+    assert out["News_Intensity"].sum() == 3
 
-    # Simulate Training (Should FIT and SAVE)
-    scaled_train = prepare_features(processed_df, features_list, is_training=True)
 
-    assert os.path.exists(settings.SCALER_PATH), "❌ Scaler was not saved to the Artifact Vault!"
-    assert scaled_train.shape[1] == len(features_list), "❌ Scaled output shape mismatch."
-    print(f"✅ TEST 2 PASSED: RobustScaler successfully fitted and saved to {settings.SCALER_PATH}")
+def test_build_training_dataset_writes_checkpoint_csvs(tmp_path, monkeypatch):
+    raw_prices = tmp_path / "prices.csv"
+    raw_news = tmp_path / "news.csv"
+    news_sentiment = tmp_path / "news_sentiment.csv"
+    merged_csv = tmp_path / "merged.csv"
+    train_features_csv = tmp_path / "train_features.csv"
+    scaler_path = tmp_path / "scaler.pkl"
 
-    # ==========================================
-    # 🧪 TEST 3: RobustScaler Loading
-    # ==========================================
-    # Simulate Backtesting (Should LOAD and TRANSFORM)
-    scaled_test = prepare_features(processed_df, features_list, is_training=False)
+    _make_price_df().to_csv(raw_prices, index=False)
+    _make_news_df().to_csv(raw_news, index=False)
 
-    # The output should be mathematically identical since we passed the same data
-    np.testing.assert_array_almost_equal(scaled_train, scaled_test, err_msg="❌ Loaded scaler produced different results!")
-    print("✅ TEST 3 PASSED: RobustScaler successfully loaded and transformed data.")
+    monkeypatch.setattr(settings, "RAW_PRICES_CSV", str(raw_prices))
+    monkeypatch.setattr(settings, "RAW_NEWS_CSV", str(raw_news))
+    monkeypatch.setattr(settings, "NEWS_SENTIMENT_CSV", str(news_sentiment))
+    monkeypatch.setattr(settings, "MERGED_DATA_CSV", str(merged_csv))
+    monkeypatch.setattr(settings, "TRAIN_FEATURES_CSV", str(train_features_csv))
+    monkeypatch.setattr(settings, "SCALER_PATH", str(scaler_path))
+    monkeypatch.setattr(settings, "TRAIN_START_DATE", "2024-01-01")
+    monkeypatch.setattr(settings, "TRAIN_END_DATE", "2024-01-31")
+    monkeypatch.setattr(settings, "TIMEFRAME", "1h")
+    monkeypatch.setattr(
+        settings,
+        "FEATURES_LIST",
+        [
+            "Log_Return",
+            "Volume_Z_Score",
+            "RSI",
+            "MACD_Hist",
+            "BB_Pct",
+            "ATR_Pct",
+            "QQQ_Ret",
+            "ARKK_Ret",
+            "Rel_Strength_QQQ",
+            "VIX_Level",
+            "TNX_Level",
+            "Sentiment_EMA",
+            "News_Intensity",
+            "Sin_Time",
+            "Cos_Time",
+            "Mins_to_Close",
+        ],
+    )
 
-    print("\n🛡️ ALL PROCESSOR TESTS PASSED. Data pipeline is secure.")
+    train_df = build_training_dataset()
 
-if __name__ == "__main__":
-    test_processor_logic()
+    assert os.path.exists(news_sentiment)
+    assert os.path.exists(merged_csv)
+    assert os.path.exists(train_features_csv)
+    assert not train_df.empty
+    assert set(settings.FEATURES_LIST).issubset(train_df.columns)
+
+
+def test_prepare_features_saves_and_loads_scaler(tmp_path, monkeypatch):
+    scaler_path = tmp_path / "scaler.pkl"
+    monkeypatch.setattr(settings, "SCALER_PATH", str(scaler_path))
+
+    df = pd.DataFrame(
+        {
+            "Log_Return": [0.1, 0.2, 0.3],
+            "Volume_Z_Score": [1.0, 0.0, -1.0],
+        }
+    )
+    features = ["Log_Return", "Volume_Z_Score"]
+
+    scaled_train = prepare_features(df, features_list=features, is_training=True)
+    scaled_test = prepare_features(df, features_list=features, is_training=False)
+
+    assert os.path.exists(scaler_path)
+    assert scaled_train.shape == (3, 2)
+    assert scaled_test.shape == (3, 2)

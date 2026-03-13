@@ -118,6 +118,21 @@ If backtest fails compatibility:
    - python scripts/backtest.py
 5. Record key metrics from console and metadata.json.
 
+Backtest now also writes a report bundle into the resolved training run folder:
+
+- artifacts/<RUN_ID>/reports/figures
+- artifacts/<RUN_ID>/reports/tables
+- artifacts/<RUN_ID>/reports/summary
+
+Key outputs:
+
+- figures/actions_overlay.png
+- figures/equity_vs_benchmark.png
+- figures/drawdown_curve.png
+- figures/trade_return_hist.png (only when complete cycles exist)
+- tables/equity_timeseries.csv
+- summary/report_index.json
+
 Note: train/backtest checkpoints are now signature-aware and auto-rebuild when key settings or raw data mtimes change.
 
 ## 8. What to Track Per Run
@@ -131,6 +146,9 @@ Track these in your notes table (or use artifacts/experiment_journal.csv):
 - Final portfolio value
 - Total return
 - Number of ledger events
+- Trades per 100 bars
+- Completed cycle count
+- Average cycle return and cycle holding duration
 - Qualitative behavior notes (overtrading, frequent stop-outs, long holds)
 
 Journal note:

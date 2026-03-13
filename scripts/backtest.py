@@ -3,6 +3,7 @@
 import os
 import sys
 import json
+from datetime import datetime, timezone
 
 import joblib
 import pandas as pd
@@ -22,6 +23,300 @@ from core.processor import (
     load_raw_prices,
     merge_prices_news_macro,
 )
+
+
+def _get_bar_hours() -> int:
+    if settings.TIMEFRAME == "1h":
+        return 1
+    if settings.TIMEFRAME == "1d":
+        return 24
+    raise ValueError(f"Unsupported TIMEFRAME: {settings.TIMEFRAME}")
+
+
+def _analyze_trade_ledger(ledger_path: str) -> dict:
+    """
+    Compute ledger-derived cycle metrics.
+    For discrete_5 this is interpreted as flat-to-flat position episodes.
+    """
+    metrics = {
+        "n_transactions": 0,
+        "n_completed_cycles": 0,
+        "avg_holding_duration_bars": 0.0,
+        "avg_pnl_per_cycle_dollars": 0.0,
+        "avg_return_per_cycle_pct": 0.0,
+    }
+
+    if not os.path.exists(ledger_path):
+        return metrics
+
+    ledger = pd.read_csv(ledger_path)
+    if ledger.empty:
+        return metrics
+
+    required_cols = {
+        "Date",
+        "Portfolio_Value",
+        "Position_Before",
+        "Position_After",
+    }
+    if not required_cols.issubset(set(ledger.columns)):
+        return metrics
+
+    ledger["Date"] = pd.to_datetime(ledger["Date"], errors="coerce")
+    ledger = ledger.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
+    metrics["n_transactions"] = int(len(ledger))
+
+    threshold = 1e-10
+    bar_hours = _get_bar_hours()
+
+    cycle_pnls = []
+    cycle_returns = []
+    cycle_durations = []
+
+    entry_row = None
+    for _, row in ledger.iterrows():
+        pos_before = float(row["Position_Before"])
+        pos_after = float(row["Position_After"])
+
+        opened_from_flat = (pos_before <= threshold) and (pos_after > threshold)
+        closed_to_flat = (pos_before > threshold) and (pos_after <= threshold)
+
+        if opened_from_flat:
+            entry_row = row
+        elif closed_to_flat and entry_row is not None:
+            entry_portfolio = float(entry_row["Portfolio_Value"])
+            exit_portfolio = float(row["Portfolio_Value"])
+            pnl_dollars = exit_portfolio - entry_portfolio
+            return_pct = (
+                ((exit_portfolio - entry_portfolio) / (entry_portfolio + 1e-8)) * 100.0
+            )
+
+            duration_td = row["Date"] - entry_row["Date"]
+            duration_bars = duration_td.total_seconds() / (3600.0 * bar_hours)
+
+            cycle_pnls.append(pnl_dollars)
+            cycle_returns.append(return_pct)
+            cycle_durations.append(duration_bars)
+            entry_row = None
+
+    metrics["n_completed_cycles"] = int(len(cycle_pnls))
+    if cycle_pnls:
+        metrics["avg_pnl_per_cycle_dollars"] = float(sum(cycle_pnls) / len(cycle_pnls))
+        metrics["avg_return_per_cycle_pct"] = float(sum(cycle_returns) / len(cycle_returns))
+        metrics["avg_holding_duration_bars"] = float(sum(cycle_durations) / len(cycle_durations))
+
+    return metrics
+
+
+def _maybe_plot_backtest_actions(test_df: pd.DataFrame, ledger_path: str, save_path: str) -> None:
+    if not getattr(settings, "PLOT_BACKTEST", False):
+        return
+
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        print(f"⚠️ Plot requested but matplotlib is unavailable: {exc}")
+        return
+
+    if not os.path.exists(ledger_path):
+        print("⚠️ No ledger found. Skipping backtest plot.")
+        return
+
+    ledger = pd.read_csv(ledger_path)
+    if ledger.empty:
+        print("⚠️ Ledger is empty. Skipping backtest plot.")
+        return
+
+    df_plot = test_df.copy()
+    df_plot["Date"] = pd.to_datetime(df_plot["Date"], errors="coerce")
+    ledger["Date"] = pd.to_datetime(ledger["Date"], errors="coerce")
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+    ax.plot(df_plot["Date"], df_plot["Close"], label="Close Price")
+
+    buys = ledger[ledger["Action"].str.contains("BUY", na=False)]
+    sells = ledger[ledger["Action"].str.contains("SELL", na=False)]
+
+    if not buys.empty:
+        ax.scatter(buys["Date"], buys["Price"], marker="^", s=90, label="Buy")
+    if not sells.empty:
+        ax.scatter(sells["Date"], sells["Price"], marker="v", s=90, label="Sell")
+
+    ax.set_title(f"Backtest Actions - {settings.EXPERIMENT_NAME}")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Price")
+    ax.grid(True)
+    ax.legend()
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+    print(f"📉 Backtest action plot saved to {save_path}")
+
+
+def _ensure_reports_dirs(run_dir: str) -> dict:
+    reports_dir = os.path.join(run_dir, "reports")
+    figures_dir = os.path.join(reports_dir, "figures")
+    tables_dir = os.path.join(reports_dir, "tables")
+    summary_dir = os.path.join(reports_dir, "summary")
+
+    for d in (reports_dir, figures_dir, tables_dir, summary_dir):
+        os.makedirs(d, exist_ok=True)
+
+    return {
+        "reports_dir": reports_dir,
+        "figures_dir": figures_dir,
+        "tables_dir": tables_dir,
+        "summary_dir": summary_dir,
+    }
+
+
+def _extract_cycle_returns(ledger: pd.DataFrame, threshold: float = 1e-10):
+    required_cols = {"Date", "Portfolio_Value", "Position_Before", "Position_After"}
+    if ledger.empty or not required_cols.issubset(set(ledger.columns)):
+        return []
+
+    ordered = ledger.copy()
+    ordered["Date"] = pd.to_datetime(ordered["Date"], errors="coerce")
+    ordered = ordered.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
+
+    cycle_returns = []
+    entry_row = None
+    for _, row in ordered.iterrows():
+        pos_before = float(row["Position_Before"])
+        pos_after = float(row["Position_After"])
+        opened_from_flat = (pos_before <= threshold) and (pos_after > threshold)
+        closed_to_flat = (pos_before > threshold) and (pos_after <= threshold)
+
+        if opened_from_flat:
+            entry_row = row
+        elif closed_to_flat and entry_row is not None:
+            entry_portfolio = float(entry_row["Portfolio_Value"])
+            exit_portfolio = float(row["Portfolio_Value"])
+            ret_pct = ((exit_portfolio - entry_portfolio) / (entry_portfolio + 1e-8)) * 100.0
+            cycle_returns.append(ret_pct)
+            entry_row = None
+
+    return cycle_returns
+
+
+def _write_backtest_reports(equity_df: pd.DataFrame, ledger_path: str, reports_paths: dict) -> dict:
+    generated = {
+        "equity_timeseries_csv": None,
+        "actions_overlay_png": None,
+        "equity_vs_benchmark_png": None,
+        "drawdown_curve_png": None,
+        "trade_return_hist_png": None,
+    }
+
+    equity_csv = os.path.join(reports_paths["tables_dir"], "equity_timeseries.csv")
+    equity_df.to_csv(equity_csv, index=False)
+    generated["equity_timeseries_csv"] = equity_csv
+
+    if equity_df.empty or "Date" not in equity_df.columns:
+        return generated
+
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        print(f"⚠️ Skipping plots: matplotlib unavailable ({exc})")
+        return generated
+
+    df_plot = equity_df.copy()
+    df_plot["Date"] = pd.to_datetime(df_plot["Date"], errors="coerce")
+    df_plot = df_plot.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
+    if df_plot.empty:
+        return generated
+
+    ledger = pd.read_csv(ledger_path) if os.path.exists(ledger_path) else pd.DataFrame()
+    if not ledger.empty and "Date" in ledger.columns:
+        ledger["Date"] = pd.to_datetime(ledger["Date"], errors="coerce")
+
+    # 1) Actions overlay
+    fig, ax = plt.subplots(figsize=(14, 7))
+    ax.plot(df_plot["Date"], df_plot["Close"], label="Close Price")
+    if not ledger.empty:
+        buy_50 = ledger[ledger["Action"] == "BUY_50"]
+        buy_100 = ledger[ledger["Action"] == "BUY_100"]
+        sell_50 = ledger[ledger["Action"] == "SELL_50"]
+        sell_100 = ledger[ledger["Action"] == "SELL_100"]
+        forced = ledger[ledger["Action"] == "FORCED_SL_TP"]
+
+        if not buy_50.empty:
+            ax.scatter(buy_50["Date"], buy_50["Price"], marker="^", s=70, label="BUY_50")
+        if not buy_100.empty:
+            ax.scatter(buy_100["Date"], buy_100["Price"], marker="^", s=120, label="BUY_100")
+        if not sell_50.empty:
+            ax.scatter(sell_50["Date"], sell_50["Price"], marker="v", s=70, label="SELL_50")
+        if not sell_100.empty:
+            ax.scatter(sell_100["Date"], sell_100["Price"], marker="v", s=120, label="SELL_100")
+        if not forced.empty:
+            ax.scatter(forced["Date"], forced["Price"], marker="x", s=65, label="FORCED_SL_TP")
+
+    ax.set_title(f"Backtest Actions - {settings.EXPERIMENT_NAME}")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Price")
+    ax.grid(True)
+    ax.legend(loc="best")
+    plt.tight_layout()
+    actions_png = os.path.join(reports_paths["figures_dir"], "actions_overlay.png")
+    plt.savefig(actions_png, dpi=150)
+    plt.close()
+    generated["actions_overlay_png"] = actions_png
+
+    # 2) Equity vs benchmark
+    initial_equity = float(df_plot["Portfolio_Value"].iloc[0])
+    initial_price = float(df_plot["Close"].iloc[0])
+    df_plot["Portfolio_Index"] = (df_plot["Portfolio_Value"] / (initial_equity + 1e-8)) * 100.0
+    df_plot["BuyHold_Index"] = (df_plot["Close"] / (initial_price + 1e-8)) * 100.0
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+    ax.plot(df_plot["Date"], df_plot["Portfolio_Index"], label="Portfolio (Index=100)")
+    ax.plot(df_plot["Date"], df_plot["BuyHold_Index"], label="Buy & Hold TSLA (Index=100)")
+    ax.set_title("Equity vs Buy-and-Hold")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Index")
+    ax.grid(True)
+    ax.legend(loc="best")
+    plt.tight_layout()
+    equity_png = os.path.join(reports_paths["figures_dir"], "equity_vs_benchmark.png")
+    plt.savefig(equity_png, dpi=150)
+    plt.close()
+    generated["equity_vs_benchmark_png"] = equity_png
+
+    # 3) Drawdown
+    running_max = df_plot["Portfolio_Value"].cummax()
+    drawdown_pct = ((df_plot["Portfolio_Value"] - running_max) / (running_max + 1e-8)) * 100.0
+    fig, ax = plt.subplots(figsize=(14, 4.5))
+    ax.plot(df_plot["Date"], drawdown_pct, label="Drawdown %")
+    ax.fill_between(df_plot["Date"], drawdown_pct, 0, alpha=0.2)
+    ax.set_title("Portfolio Drawdown")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Drawdown %")
+    ax.grid(True)
+    plt.tight_layout()
+    drawdown_png = os.path.join(reports_paths["figures_dir"], "drawdown_curve.png")
+    plt.savefig(drawdown_png, dpi=150)
+    plt.close()
+    generated["drawdown_curve_png"] = drawdown_png
+
+    # 4) Trade return histogram
+    if not ledger.empty:
+        cycle_returns = _extract_cycle_returns(ledger)
+        if cycle_returns:
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.hist(cycle_returns, bins=20)
+            ax.set_title("Cycle Return Distribution")
+            ax.set_xlabel("Return per cycle (%)")
+            ax.set_ylabel("Count")
+            ax.grid(True)
+            plt.tight_layout()
+            hist_png = os.path.join(reports_paths["figures_dir"], "trade_return_hist.png")
+            plt.savefig(hist_png, dpi=150)
+            plt.close()
+            generated["trade_return_hist_png"] = hist_png
+
+    return generated
 
 
 def _resolve_trained_artifact_paths():
@@ -244,7 +539,9 @@ def run_backtest():
     obs = env.reset()
     done = False
     trade_history = []
+    equity_history = []
     last_step_info = None
+    total_steps = 0
 
     if settings.ACTION_SPACE_TYPE == "discrete_3":
         action_map = {0: "SELL_ALL", 1: "BUY_ALL", 2: "HOLD"}
@@ -262,10 +559,22 @@ def run_backtest():
 
     while not done:
         action, _ = model.predict(obs, deterministic=True)
+        position_before = float(env.get_attr("position")[0])
         obs, rewards, dones, infos = env.step(action)
         done = bool(dones[0])
         step_info = infos[0]
         last_step_info = step_info
+        total_steps += 1
+
+        step_idx = int(step_info["step"])
+        if 0 <= step_idx < len(test_df):
+            equity_history.append(
+                {
+                    "Date": test_df.iloc[step_idx]["Date"],
+                    "Close": round(float(step_info["price"]), 6),
+                    "Portfolio_Value": round(float(step_info["portfolio_value"]), 6),
+                }
+            )
 
         actual_action = int(step_info["action"])
         current_position = float(env.get_attr("position")[0])
@@ -283,6 +592,8 @@ def run_backtest():
                     "Action": "FORCED_SL_TP" if sl_tp_triggered else action_map.get(actual_action, "UNKNOWN"),
                     "Price": round(float(step_info["price"]), 6),
                     "Portfolio_Value": round(float(step_info["portfolio_value"]), 6),
+                    "Position_Before": round(position_before, 10),
+                    "Position_After": round(current_position, 10),
                     "SL_TP_Triggered": sl_tp_triggered,
                 }
             )
@@ -303,13 +614,84 @@ def run_backtest():
     print(f"Logged Events: {len(trade_history)}")
     print("=" * 60)
 
+    os.makedirs(os.path.dirname(ledger_path), exist_ok=True)
+    reports_paths = _ensure_reports_dirs(os.path.dirname(ledger_path))
     if trade_history:
         df_trades = pd.DataFrame(trade_history)
-        os.makedirs(os.path.dirname(ledger_path), exist_ok=True)
         df_trades.to_csv(ledger_path, index=False)
         print(f"💾 Ledger saved to {ledger_path}")
     else:
+        pd.DataFrame(
+            columns=[
+                "Date",
+                "Action",
+                "Price",
+                "Portfolio_Value",
+                "Position_Before",
+                "Position_After",
+                "SL_TP_Triggered",
+            ]
+        ).to_csv(ledger_path, index=False)
         print("ℹ️ No trade events were logged for this backtest run.")
+
+    # Legacy root-level plot, kept for backward compatibility if setting is enabled.
+    _maybe_plot_backtest_actions(
+        test_df=test_df,
+        ledger_path=ledger_path,
+        save_path=os.path.join(os.path.dirname(ledger_path), "backtest_actions.png"),
+    )
+
+    equity_df = pd.DataFrame(equity_history)
+    report_artifacts = _write_backtest_reports(equity_df, ledger_path, reports_paths)
+    print(f"📁 Backtest report bundle saved under {reports_paths['reports_dir']}")
+
+    ledger_metrics = _analyze_trade_ledger(ledger_path)
+    trades_per_100_bars = (ledger_metrics["n_transactions"] / total_steps) * 100 if total_steps > 0 else 0.0
+    summary_path = os.path.join(os.path.dirname(ledger_path), "backtest_summary.json")
+    report_index_path = os.path.join(reports_paths["summary_dir"], "report_index.json")
+
+    backtest_summary = {
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "run_id": run_id,
+        "symbol": settings.SYMBOL,
+        "timeframe": settings.TIMEFRAME,
+        "action_space_type": settings.ACTION_SPACE_TYPE,
+        "reward_strategy": settings.REWARD_STRATEGY,
+        "test_dates": {
+            "start": settings.TEST_START_DATE,
+            "end": settings.TEST_END_DATE,
+            "bars_evaluated": int(total_steps),
+        },
+        "core_metrics": {
+            "final_portfolio_value": round(final_val, 6),
+            "total_return_pct": round(total_return, 6),
+            "logged_events": int(len(trade_history)),
+            "trades_per_100_bars": round(trades_per_100_bars, 6),
+        },
+        "cycle_metrics": {
+            "n_completed_cycles": int(ledger_metrics["n_completed_cycles"]),
+            "avg_holding_duration_bars": round(ledger_metrics["avg_holding_duration_bars"], 6),
+            "avg_pnl_per_cycle_dollars": round(ledger_metrics["avg_pnl_per_cycle_dollars"], 6),
+            "avg_return_per_cycle_pct": round(ledger_metrics["avg_return_per_cycle_pct"], 6),
+        },
+        "artifact_paths": {
+            "ledger_path": ledger_path,
+            "summary_path": summary_path,
+            "reports_dir": reports_paths["reports_dir"],
+            "figures_dir": reports_paths["figures_dir"],
+            "tables_dir": reports_paths["tables_dir"],
+            "summary_dir": reports_paths["summary_dir"],
+            "report_index_path": report_index_path,
+            "report_artifacts": report_artifacts,
+        },
+    }
+
+    with open(summary_path, "w") as f:
+        json.dump(backtest_summary, f, indent=2)
+    with open(report_index_path, "w") as f:
+        json.dump(backtest_summary, f, indent=2)
+    print(f"🧾 Backtest summary saved to {summary_path}")
+    print(f"🧾 Backtest report index saved to {report_index_path}")
 
     log_backtest_result(
         run_id=run_id,

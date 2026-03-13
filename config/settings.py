@@ -94,7 +94,7 @@ RANDOM_SEED     = 42
 # ==========================================
 # 8. OPTUNA
 # ==========================================
-USE_OPTUNA_BEST_PARAMS = False
+USE_OPTUNA_BEST_PARAMS = True
 OPTUNA_STUDY_NAME      = f"ppo_{SYMBOL.lower()}_{TIMEFRAME}"
 OPTUNA_DB_PATH         = os.path.join(BASE_DIR, "artifacts", "optuna_study.db")
 OPTUNA_TRIALS          = 20

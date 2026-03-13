@@ -19,6 +19,7 @@
 
 Outputs are written to data/raw, data/intermediate, and artifacts/<EXPERIMENT_NAME>.
 Run index is written to artifacts/experiment_journal.csv.
+Backtest also generates a report bundle under artifacts/<RESOLVED_RUN_ID>/reports/.
 
 ## Architecture Overview
 
@@ -143,6 +144,15 @@ What changed:
 - Signature-aware checkpoint cache added for test features.
 - Auto-logs backtest metrics into `artifacts/experiment_journal.csv`.
 - Uses the scaler from the resolved training run (same run as loaded model).
+- Stores richer ledger rows with position transitions (`Position_Before`, `Position_After`).
+- Writes compact summary JSON (`backtest_summary.json`) for each resolved run.
+- Generates a report bundle under `artifacts/<RUN_ID>/reports/`:
+  - `figures/actions_overlay.png`
+  - `figures/equity_vs_benchmark.png`
+  - `figures/drawdown_curve.png`
+  - `figures/trade_return_hist.png` (when cycle returns exist)
+  - `tables/equity_timeseries.csv`
+  - `summary/report_index.json`
 
 ### scripts/macro_engine.py
 
@@ -164,7 +174,8 @@ What changed:
 
 - Global import-time data loading removed; now loaded inside `_load_train_data()`.
 - Objective factory pattern (`build_objective`) loads data once and reuses it across trials.
-- `prepare_features(..., is_training=False)` reuses existing scaler and avoids leakage from re-fit.
+- Uses an optimization-local in-memory `RobustScaler` fit on current train features.
+- No dependency on a pre-existing scaler file from a prior training run.
 - Hardcoded values replaced by settings:
   - `OPTUNA_TRIALS`
   - `OPTUNA_EVAL_TIMESTEPS`
@@ -190,6 +201,13 @@ What changed:
 | `artifacts/<EXPERIMENT_NAME>/scaler.pkl` | `train.py` | Fitted RobustScaler for training feature set |
 | `artifacts/<EXPERIMENT_NAME>/metadata.json` | `train.py` | Full reproducibility receipt |
 | `artifacts/<EXPERIMENT_NAME>/backtest_ledger.csv` | `backtest.py` | Per-step trade log over test window |
+| `artifacts/<EXPERIMENT_NAME>/backtest_summary.json` | `backtest.py` | Compact machine-readable backtest summary |
+| `artifacts/<EXPERIMENT_NAME>/reports/figures/actions_overlay.png` | `backtest.py` | Price chart with buy/sell/forced-exit markers |
+| `artifacts/<EXPERIMENT_NAME>/reports/figures/equity_vs_benchmark.png` | `backtest.py` | Portfolio index vs TSLA buy-and-hold index |
+| `artifacts/<EXPERIMENT_NAME>/reports/figures/drawdown_curve.png` | `backtest.py` | Drawdown curve over the backtest window |
+| `artifacts/<EXPERIMENT_NAME>/reports/figures/trade_return_hist.png` | `backtest.py` | Histogram of cycle returns (if cycles exist) |
+| `artifacts/<EXPERIMENT_NAME>/reports/tables/equity_timeseries.csv` | `backtest.py` | Time series of close and portfolio value per step |
+| `artifacts/<EXPERIMENT_NAME>/reports/summary/report_index.json` | `backtest.py` | Report bundle index for downstream tooling |
 | `artifacts/optuna_study.db` | `optimize.py` | Resumable SQLite Optuna trial history |
 | `artifacts/experiment_journal.csv` | `train.py` + `backtest.py` | Central run registry with params and outcomes |
 

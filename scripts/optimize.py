@@ -9,8 +9,10 @@ import os
 import sys
 
 import optuna
+import numpy as np
 from optuna.pruners import MedianPruner
 from optuna.samplers import TPESampler
+from sklearn.preprocessing import RobustScaler
 from stable_baselines3 import PPO
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.monitor import Monitor
@@ -20,7 +22,7 @@ import pandas as pd
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import settings
-from core.processor import build_training_dataset, prepare_features
+from core.processor import build_training_dataset
 from core.environment import TradingEnv
 
 
@@ -33,6 +35,22 @@ def _load_train_data():
         print("⚡ Loaded train features from checkpoint — skipping reprocessing.")
         return pd.read_csv(settings.TRAIN_FEATURES_CSV, parse_dates=["Date"])
     return build_training_dataset()
+
+
+def _scale_for_optimization(train_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Fit a fresh scaler in-memory for optimization runs.
+    This avoids any dependency on a previously saved training scaler file.
+    """
+    features_list = settings.FEATURES_LIST
+    missing = [col for col in features_list if col not in train_df.columns]
+    if missing:
+        raise ValueError(f"❌ Missing requested feature columns in optimization data: {missing}")
+
+    data_to_scale = train_df[features_list].replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    scaler = RobustScaler()
+    scaled = scaler.fit_transform(data_to_scale)
+    return pd.DataFrame(scaled, columns=features_list, index=train_df.index)
 
 
 def sample_ppo_params(trial: optuna.Trial) -> dict:
@@ -84,7 +102,7 @@ def run_optimization():
     # 1. Load data once — all trials share the same dataset
     # -------------------------------------------------------
     train_df        = _load_train_data()
-    scaled_features = prepare_features(train_df, is_training=False)  # Scaler already fitted
+    scaled_features = _scale_for_optimization(train_df)
     print(f"📅 Optimizing on: {len(train_df)} rows | "
           f"{settings.TRAIN_START_DATE} → {settings.TRAIN_END_DATE}")
 

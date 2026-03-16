@@ -938,7 +938,7 @@ def run_backtest():
         actual_action = int(step_info["action"])
         current_position = float(env.get_attr("position")[0])
         sl_tp_triggered = bool(step_info.get("sl_tp_triggered", False))
-        position_changed = current_position != prev_position
+        position_changed = abs(current_position - prev_position) > 1e-6
 
         # Log explicit trade actions and forced SL/TP exits.
         if sl_tp_triggered or (position_changed and actual_action != 2):
@@ -967,12 +967,7 @@ def run_backtest():
     final_val = float(last_step_info["portfolio_value"])
     total_return = ((final_val - initial_val) / (initial_val + 1e-8)) * 100.0
 
-    print("=" * 60)
-    print(f"🏆 BACKTEST RESULTS: {settings.EXPERIMENT_NAME}")
-    print(f"Final Portfolio Value: ${final_val:.2f}")
-    print(f"Total Return: {total_return:.2f}%")
-    print(f"Logged Events: {len(trade_history)}")
-    print("=" * 60)
+    # Full results printed after ledger analysis below.
 
     os.makedirs(os.path.dirname(ledger_path), exist_ok=True)
     reports_paths = _ensure_reports_dirs(os.path.dirname(ledger_path))
@@ -1037,6 +1032,38 @@ def run_backtest():
 
     ledger_metrics = _analyze_trade_ledger(ledger_path)
     trades_per_100_bars = (ledger_metrics["n_transactions"] / total_steps) * 100 if total_steps > 0 else 0.0
+
+    # ── Detailed results printout ──────────────────────────────────────────
+    _action_order = ["BUY_100", "BUY_50", "SELL_100", "SELL_50", "FORCED_SL_TP"]
+    action_counts: dict[str, int] = {}
+    for _evt in trade_history:
+        _lbl = _evt["Action"]
+        action_counts[_lbl] = action_counts.get(_lbl, 0) + 1
+
+    print("=" * 60)
+    print(f"🏆 BACKTEST RESULTS: {settings.EXPERIMENT_NAME}")
+    print(f"   Final Portfolio Value : ${final_val:.2f}")
+    print(f"   Total Return          : {total_return:.2f}%")
+    print(f"   Total Bars Evaluated  : {total_steps}")
+    print(f"   Trades / 100 bars     : {trades_per_100_bars:.1f}")
+    print()
+    print(   "   Action Breakdown:")
+    for _lbl in _action_order:
+        _cnt = action_counts.get(_lbl, 0)
+        if _cnt:
+            print(f"     {_lbl:<16}: {_cnt}")
+    for _lbl, _cnt in action_counts.items():
+        if _lbl not in _action_order:
+            print(f"     {_lbl:<16}: {_cnt}")
+    print(f"   Total Events          : {len(trade_history)}")
+    print()
+    print(f"   Completed Cycles      : {ledger_metrics['n_completed_cycles']}")
+    print(f"   Avg Hold (bars)       : {ledger_metrics['avg_holding_duration_bars']:.1f}")
+    print(f"   Avg PnL / Cycle       : ${ledger_metrics['avg_pnl_per_cycle_dollars']:.2f}")
+    print(f"   Avg Return / Cycle    : {ledger_metrics['avg_return_per_cycle_pct']:.2f}%")
+    print("=" * 60)
+    # ──────────────────────────────────────────────────────────────────────
+
     summary_path = os.path.join(os.path.dirname(ledger_path), "backtest_summary.json")
     report_index_path = os.path.join(reports_paths["summary_dir"], "report_index.json")
 

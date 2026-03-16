@@ -27,7 +27,7 @@ def test_processor_logic():
     # ==========================================
     processed_df = add_technical_indicators(df)
 
-    expected_columns = ['Log_Return', 'Volume_Z_Score', 'RSI', 'MACD_Hist', 'BB_Pct', 'ATR_Pct']
+    expected_columns = ['Log_Return', 'Volume_Z_Score', 'RSI', 'MACD_Hist', 'ATR_Pct']
     for col in expected_columns:
         assert col in processed_df.columns, f"❌ Missing indicator column: {col}"
 

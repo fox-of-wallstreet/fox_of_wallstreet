@@ -39,7 +39,7 @@ def test_build_news_sentiment_hourly_aggregation():
     news_df = _make_news_df()
     out = build_news_sentiment(news_df, timeframe="1h")
 
-    assert {"Date", "Sentiment_EMA", "News_Intensity"}.issubset(out.columns)
+    assert {"Date", "Sentiment_Mean", "News_Intensity"}.issubset(out.columns)
     assert len(out) == 2
     assert out["News_Intensity"].sum() == 3
 
@@ -72,18 +72,18 @@ def test_build_training_dataset_writes_checkpoint_csvs(tmp_path, monkeypatch):
             "Volume_Z_Score",
             "RSI",
             "MACD_Hist",
-            "BB_Pct",
             "ATR_Pct",
+            "Dist_MA_Slow",
+            "Realized_Vol_Short",
+            "Vol_Regime",
             "QQQ_Ret",
-            "ARKK_Ret",
             "Rel_Strength_QQQ",
-            "VIX_Level",
-            "TNX_Level",
-            "Sentiment_EMA",
+            "VIX_Z",
+            "TNX_Z",
+            "Sentiment_Mean",
             "News_Intensity",
             "Sin_Time",
             "Cos_Time",
-            "Mins_to_Close",
         ],
     )
 

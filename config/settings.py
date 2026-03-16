@@ -26,7 +26,8 @@ TIMEFRAME = "1h"   # Options: "1h", "1d"
 # 2. ACTION SPACE
 # ==========================================
 ACTION_SPACE_TYPE = "discrete_5"   # Options: "discrete_3", "discrete_5"
-INITIAL_BALANCE = 10_000.0          # Start capital. Typical: 1_000 to 100_000.
+INITIAL_BALANCE = 10_000.0          # Start capital used for training normalization. Must match trained model.
+LIVE_TRADING_BUDGET = 10_000.0      # Max cash the live trader may allocate. Cap to trade only a slice of your Alpaca account.
 CASH_RISK_FRACTION = 0.65           # Position sizing per buy. Typical: 0.30 to 1.00. Lower = safer.
 
 # ==========================================
@@ -107,8 +108,8 @@ TOTAL_TIMESTEPS = 200_000  # Best observed for TSLA 1h discrete_5 (Mogens)
 LEARNING_RATE          = 0.000237   # Best known (run 0918, +8.16% OOS)
 LR_COSINE_MIN_FRACTION = 0.1        # Used only when cosine schedule is enabled in train.py
 ENT_COEF               = 0.000422  # Best known (run 0918, +8.16% OOS)
-BATCH_SIZE             = 128        # Best known (run 0918, +8.16% OOS)
-GAMMA                  = 0.9005     # Best known (run 0918, +8.16% OOS)
+BATCH_SIZE             = 64         # Best known (run 0918, +8.16% OOS) — SB3 default
+GAMMA                  = 0.99       # Best known (run 0918, +8.16% OOS) — SB3 default
 N_STACK         = 5
 RANDOM_SEED     = 42
 

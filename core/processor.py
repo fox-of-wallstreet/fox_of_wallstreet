@@ -420,37 +420,166 @@ def prepare_features(df, features_list=None, is_training=True):
 
 
 # ==========================================
-# ORCHESTRATOR
+# SHARED DATASET BUILDERS
 # ==========================================
 
-def build_training_dataset(news_scorer=None):
+def get_or_build_news_sentiment(
+    news_df=None,
+    timeframe=None,
+    scorer=None,
+    use_cache=True,
+    force_rebuild=False,
+):
+    """
+    Load cached news sentiment if available, otherwise compute it from raw news
+    using FinBERT (or a provided scorer), then save the checkpoint.
+
+    Returns:
+        pd.DataFrame with columns: Date, Sentiment_Mean, News_Intensity
+    """
+    timeframe = timeframe or settings.TIMEFRAME
+
+    if use_cache and not force_rebuild and os.path.exists(settings.NEWS_SENTIMENT_CSV):
+        sentiment_df = pd.read_csv(settings.NEWS_SENTIMENT_CSV)
+        if "Date" not in sentiment_df.columns:
+            raise ValueError(
+                f"❌ Cached news sentiment file exists but has no 'Date' column: "
+                f"{settings.NEWS_SENTIMENT_CSV}"
+            )
+
+        sentiment_df["Date"] = pd.to_datetime(sentiment_df["Date"], errors="coerce")
+        sentiment_df = (
+            sentiment_df.dropna(subset=["Date"])
+            .sort_values("Date")
+            .reset_index(drop=True)
+        )
+        print(f"⚡ Loaded cached news sentiment from {settings.NEWS_SENTIMENT_CSV}")
+        return sentiment_df
+
+    if news_df is None:
+        news_df = load_raw_news()
+
+    sentiment_df = build_news_sentiment(
+        news_df,
+        timeframe=timeframe,
+        scorer=scorer,
+    )
+
+    os.makedirs(os.path.dirname(settings.NEWS_SENTIMENT_CSV), exist_ok=True)
+    sentiment_df.to_csv(settings.NEWS_SENTIMENT_CSV, index=False)
+    print(f"✅ News sentiment saved to {settings.NEWS_SENTIMENT_CSV}")
+
+    return sentiment_df
+
+
+def build_feature_dataset(
+    start_date,
+    end_date,
+    output_csv=None,
+    news_scorer=None,
+    use_cached_sentiment=True,
+    force_rebuild_sentiment=False,
+    save_merged=True,
+):
+    """
+    Shared dataset builder for both training and backtesting.
+
+    Flow:
+    raw prices + raw news + raw macro
+        -> cached or freshly built news sentiment
+        -> merged dataset
+        -> technical indicators / engineered features
+        -> date slice
+        -> optional CSV checkpoint
+
+    Parameters
+    ----------
+    start_date : str or datetime-like
+        Inclusive start of dataset slice.
+    end_date : str or datetime-like
+        Inclusive end of dataset slice.
+    output_csv : str or None
+        Optional path for saving the sliced feature dataset.
+    news_scorer : callable or None
+        Optional custom scorer for news sentiment.
+    use_cached_sentiment : bool
+        Whether to reuse settings.NEWS_SENTIMENT_CSV when available.
+    force_rebuild_sentiment : bool
+        If True, ignore the cached sentiment checkpoint and recompute.
+    save_merged : bool
+        Whether to save the full merged pre-feature dataframe to MERGED_DATA_CSV.
+    """
     price_df = load_raw_prices()
-    news_df  = load_raw_news()
     macro_df = load_raw_macro()
 
-    news_sentiment_df = build_news_sentiment(news_df, timeframe=settings.TIMEFRAME, scorer=news_scorer)
-    os.makedirs(os.path.dirname(settings.NEWS_SENTIMENT_CSV), exist_ok=True)
-    news_sentiment_df.to_csv(settings.NEWS_SENTIMENT_CSV, index=False)
+    sentiment_df = get_or_build_news_sentiment(
+        news_df=None,
+        timeframe=settings.TIMEFRAME,
+        scorer=news_scorer,
+        use_cache=use_cached_sentiment,
+        force_rebuild=force_rebuild_sentiment,
+    )
 
-    merged_df = merge_prices_news_macro(price_df, news_sentiment_df, macro_df)
-    os.makedirs(os.path.dirname(settings.MERGED_DATA_CSV), exist_ok=True)
-    merged_df.to_csv(settings.MERGED_DATA_CSV, index=False)
+    merged_df = merge_prices_news_macro(price_df, sentiment_df, macro_df)
+
+    if save_merged:
+        os.makedirs(os.path.dirname(settings.MERGED_DATA_CSV), exist_ok=True)
+        merged_df.to_csv(settings.MERGED_DATA_CSV, index=False)
+        print(f"✅ Merged dataset saved to {settings.MERGED_DATA_CSV}")
 
     feature_df = add_technical_indicators(merged_df)
 
-    train_start = pd.to_datetime(settings.TRAIN_START_DATE)
-    train_end   = pd.to_datetime(settings.TRAIN_END_DATE)
-    train_df    = feature_df[
-        (feature_df["Date"] >= train_start) & (feature_df["Date"] <= train_end)
-    ].copy()
+    start_date = pd.to_datetime(start_date)
+    end_date = pd.to_datetime(end_date)
 
-    if train_df.empty:
-        raise ValueError("❌ Training dataset is empty after feature engineering and date filtering.")
+    sliced_df = feature_df[
+        (feature_df["Date"] >= start_date) &
+        (feature_df["Date"] <= end_date)
+    ].copy().reset_index(drop=True)
 
-    os.makedirs(os.path.dirname(settings.TRAIN_FEATURES_CSV), exist_ok=True)
-    train_df.to_csv(settings.TRAIN_FEATURES_CSV, index=False)
+    if sliced_df.empty:
+        raise ValueError(
+            "❌ Feature dataset is empty after processing and date filtering. "
+            f"Requested range: {start_date.date()} → {end_date.date()}"
+        )
 
-    print(f"✅ News sentiment  → {settings.NEWS_SENTIMENT_CSV}")
-    print(f"✅ Merged dataset  → {settings.MERGED_DATA_CSV}")
-    print(f"✅ Train features  → {settings.TRAIN_FEATURES_CSV}")
-    return train_df
+    if output_csv:
+        os.makedirs(os.path.dirname(output_csv), exist_ok=True)
+        sliced_df.to_csv(output_csv, index=False)
+        print(f"✅ Feature slice saved to {output_csv}")
+
+    return sliced_df
+
+
+# ==========================================
+# ORCHESTRATOR
+# ==========================================
+
+def build_training_dataset(news_scorer=None, force_rebuild_sentiment=False):
+    """
+    Build the train split using the shared dataset builder.
+    """
+    return build_feature_dataset(
+        start_date=settings.TRAIN_START_DATE,
+        end_date=settings.TRAIN_END_DATE,
+        output_csv=settings.TRAIN_FEATURES_CSV,
+        news_scorer=news_scorer,
+        use_cached_sentiment=True,
+        force_rebuild_sentiment=force_rebuild_sentiment,
+        save_merged=True,
+    )
+
+
+def build_test_dataset(news_scorer=None, force_rebuild_sentiment=False):
+    """
+    Build the test split using the same shared dataset builder as training.
+    """
+    return build_feature_dataset(
+        start_date=settings.TEST_START_DATE,
+        end_date=settings.TEST_END_DATE,
+        output_csv=settings.TEST_FEATURES_CSV,
+        news_scorer=news_scorer,
+        use_cached_sentiment=True,
+        force_rebuild_sentiment=force_rebuild_sentiment,
+        save_merged=True,
+    )

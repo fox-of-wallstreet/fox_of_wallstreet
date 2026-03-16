@@ -50,15 +50,6 @@ def _compute_macd_hist(df):
     return df
 
 
-def _compute_bb_pct(df):
-    rolling_mean = df["Close"].rolling(window=settings.VOLATILITY_WINDOW).mean()
-    rolling_std  = df["Close"].rolling(window=settings.VOLATILITY_WINDOW).std()
-    upper = rolling_mean + (2 * rolling_std)
-    lower = rolling_mean - (2 * rolling_std)
-    df["BB_Pct"] = (df["Close"] - lower) / ((upper - lower) + 1e-8)
-    return df
-
-
 def _compute_atr_pct(df):
     high_low    = df["High"] - df["Low"]
     high_close  = (df["High"] - df["Close"].shift(1)).abs()
@@ -76,35 +67,65 @@ def _compute_qqq_ret(df):
     return df
 
 
-def _compute_arkk_ret(df):
-    if "ARKK_Close" in df.columns:
-        df["ARKK_Ret"] = np.log(df["ARKK_Close"] / df["ARKK_Close"].shift(1))
-    else:
-        df["ARKK_Ret"] = 0.0
-    return df
-
-
 def _compute_rel_strength_qqq(df):
+    # 20-bar rolling return diff: target outperformance vs QQQ
     if "QQQ_Close" in df.columns:
-        df["Rel_Strength_QQQ"] = df["Close"] / (df["QQQ_Close"] + 1e-8)
+        qqq_ret = np.log(df["QQQ_Close"] / df["QQQ_Close"].shift(1))
+        df["Rel_Strength_QQQ"] = (
+            df["Log_Return"].rolling(window=settings.VOLATILITY_WINDOW).sum()
+            - qqq_ret.rolling(window=settings.VOLATILITY_WINDOW).sum()
+        )
     else:
         df["Rel_Strength_QQQ"] = 0.0
     return df
 
 
-def _compute_vix_level(df):
-    df["VIX_Level"] = df["VIX_Close"] if "VIX_Close" in df.columns else 0.0
+def _compute_vix_z(df):
+    if "VIX_Close" in df.columns:
+        rolling_mean = df["VIX_Close"].rolling(window=settings.VOLATILITY_WINDOW).mean()
+        rolling_std  = df["VIX_Close"].rolling(window=settings.VOLATILITY_WINDOW).std()
+        df["VIX_Z"] = (df["VIX_Close"] - rolling_mean) / (rolling_std + 1e-8)
+    else:
+        df["VIX_Z"] = 0.0
     return df
 
 
-def _compute_tnx_level(df):
-    df["TNX_Level"] = df["TNX_Close"] if "TNX_Close" in df.columns else 0.0
+def _compute_tnx_z(df):
+    if "TNX_Close" in df.columns:
+        rolling_mean = df["TNX_Close"].rolling(window=settings.VOLATILITY_WINDOW).mean()
+        rolling_std  = df["TNX_Close"].rolling(window=settings.VOLATILITY_WINDOW).std()
+        df["TNX_Z"] = (df["TNX_Close"] - rolling_mean) / (rolling_std + 1e-8)
+    else:
+        df["TNX_Z"] = 0.0
     return df
 
 
-def _compute_sentiment_ema(df):
-    if "Sentiment_EMA" not in df.columns:
-        df["Sentiment_EMA"] = 0.0
+def _compute_sentiment_mean(df):
+    if "Sentiment_Mean" not in df.columns:
+        df["Sentiment_Mean"] = 0.0
+    return df
+
+
+def _compute_dist_ma_slow(df):
+    ma_slow = df["Close"].rolling(window=settings.MA_SLOW_WINDOW).mean()
+    df["Dist_MA_Slow"] = (df["Close"] / (ma_slow + 1e-8)) - 1
+    return df
+
+
+def _compute_realized_vol_short(df):
+    ann_factor = np.sqrt(252 * 6.5) if settings.TIMEFRAME == "1h" else np.sqrt(252)
+    df["Realized_Vol_Short"] = (
+        df["Log_Return"].rolling(window=settings.VOL_SHORT_WINDOW).std() * ann_factor
+    )
+    return df
+
+
+def _compute_vol_regime(df):
+    ann_factor = np.sqrt(252 * 6.5) if settings.TIMEFRAME == "1h" else np.sqrt(252)
+    realized_vol_long = (
+        df["Log_Return"].rolling(window=settings.VOL_LONG_WINDOW).std() * ann_factor
+    )
+    df["Vol_Regime"] = df["Realized_Vol_Short"] / (realized_vol_long + 1e-8)
     return df
 
 
@@ -132,12 +153,21 @@ def _compute_cos_time(df):
     return df
 
 
-def _compute_mins_to_close(df):
-    if settings.TIMEFRAME == "1h":
-        mins = df["Date"].dt.hour * 60 + df["Date"].dt.minute
-        df["Mins_to_Close"] = (16 * 60 - mins).clip(lower=0)
-    else:
-        df["Mins_to_Close"] = 0.0
+def _compute_avwap_dist(df):
+    # Computes BOTH AVWAP_Dist and AVWAP_Dist_ATR in one leakage-safe pass.
+    # See core/avwap.py for full algorithm documentation.
+    from core.avwap import compute_avwap_features
+    return compute_avwap_features(df)
+
+
+def _compute_avwap_dist_atr(df):
+    # AVWAP_Dist_ATR is computed alongside AVWAP_Dist in the same pass.
+    # This entry is a no-op guard — it only validates that the column already exists.
+    if "AVWAP_Dist_ATR" not in df.columns:
+        raise ValueError(
+            "AVWAP_Dist_ATR requires AVWAP_Dist to appear before it in FEATURES_LIST. "
+            "Both columns are produced together by _compute_avwap_dist."
+        )
     return df
 
 
@@ -146,22 +176,24 @@ def _compute_mins_to_close(df):
 # The only place that connects a feature name to its computation.
 # ==========================================
 FEATURE_REGISTRY = {
-    "Log_Return":        _compute_log_return,
-    "Volume_Z_Score":    _compute_volume_z_score,
-    "RSI":               _compute_rsi,
-    "MACD_Hist":         _compute_macd_hist,
-    "BB_Pct":            _compute_bb_pct,
-    "ATR_Pct":           _compute_atr_pct,
-    "QQQ_Ret":           _compute_qqq_ret,
-    "ARKK_Ret":          _compute_arkk_ret,
-    "Rel_Strength_QQQ":  _compute_rel_strength_qqq,
-    "VIX_Level":         _compute_vix_level,
-    "TNX_Level":         _compute_tnx_level,
-    "Sentiment_EMA":     _compute_sentiment_ema,
-    "News_Intensity":    _compute_news_intensity,
-    "Sin_Time":          _compute_sin_time,
-    "Cos_Time":          _compute_cos_time,
-    "Mins_to_Close":     _compute_mins_to_close,
+    "Log_Return":          _compute_log_return,
+    "Volume_Z_Score":      _compute_volume_z_score,
+    "RSI":                 _compute_rsi,
+    "MACD_Hist":           _compute_macd_hist,
+    "ATR_Pct":             _compute_atr_pct,
+    "Dist_MA_Slow":        _compute_dist_ma_slow,
+    "Realized_Vol_Short":  _compute_realized_vol_short,
+    "Vol_Regime":          _compute_vol_regime,
+    "QQQ_Ret":             _compute_qqq_ret,
+    "Rel_Strength_QQQ":    _compute_rel_strength_qqq,
+    "VIX_Z":               _compute_vix_z,
+    "TNX_Z":               _compute_tnx_z,
+    "Sentiment_Mean":      _compute_sentiment_mean,
+    "News_Intensity":      _compute_news_intensity,
+    "Sin_Time":            _compute_sin_time,
+    "Cos_Time":            _compute_cos_time,
+    "AVWAP_Dist":          _compute_avwap_dist,
+    "AVWAP_Dist_ATR":      _compute_avwap_dist_atr,
 }
 
 
@@ -259,14 +291,14 @@ def build_news_sentiment(news_df, timeframe=None, scorer=None):
     timeframe = timeframe or settings.TIMEFRAME
 
     if news_df is None or news_df.empty:
-        return pd.DataFrame(columns=["Date", "Sentiment_EMA", "News_Intensity"])
+        return pd.DataFrame(columns=["Date", "Sentiment_Mean", "News_Intensity"])
 
     df = news_df.copy()
     df["headline"] = df["headline"].fillna("").astype(str).str.strip()
     df = df[df["headline"] != ""].copy()
 
     if df.empty:
-        return pd.DataFrame(columns=["Date", "Sentiment_EMA", "News_Intensity"])
+        return pd.DataFrame(columns=["Date", "Sentiment_Mean", "News_Intensity"])
 
     if "Raw_Sentiment" not in df.columns:
         scorer = scorer or score_headlines_finbert
@@ -281,18 +313,14 @@ def build_news_sentiment(news_df, timeframe=None, scorer=None):
     grouped = (
         df.groupby("Date", as_index=False)
         .agg(
-            Raw_Sentiment=("Raw_Sentiment", "mean"),
+            Sentiment_Mean=("Raw_Sentiment", "mean"),
             News_Intensity=("headline", "count"),
         )
         .sort_values("Date")
         .reset_index(drop=True)
     )
 
-    grouped["Sentiment_EMA"] = grouped["Raw_Sentiment"].ewm(
-        span=settings.NEWS_EMA_SPAN, adjust=False
-    ).mean()
-
-    return grouped[["Date", "Sentiment_EMA", "News_Intensity"]]
+    return grouped[["Date", "Sentiment_Mean", "News_Intensity"]]
 
 
 def merge_prices_and_news(price_df, news_sentiment_df):
@@ -306,7 +334,7 @@ def merge_prices_and_news(price_df, news_sentiment_df):
     news_sentiment_df = news_sentiment_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
 
     merged = pd.merge_asof(price_df, news_sentiment_df, on="Date", direction="backward")
-    merged["Sentiment_EMA"]  = merged["Sentiment_EMA"].fillna(0.0)
+    merged["Sentiment_Mean"]  = merged["Sentiment_Mean"].fillna(0.0)
     merged["News_Intensity"] = merged["News_Intensity"].fillna(0.0)
     return merged
 

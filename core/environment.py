@@ -16,8 +16,8 @@ class TradingEnv(gym.Env):
     metadata = {"render_modes": ["human"]}
 
     # Internal portfolio state features appended to every observation:
-    # [position_status, unrealized_pnl_pct, cash_ratio, bars_in_trade_normalized]
-    NUM_PORTFOLIO_FEATURES = 4
+    # [cash_ratio, position_size, inventory_fraction, unrealized_pnl, last_action]
+    NUM_PORTFOLIO_FEATURES = 5
 
     def __init__(self, df, features):
         super().__init__()
@@ -63,14 +63,15 @@ class TradingEnv(gym.Env):
     # -------------------------------------------------------
     # RESET
     # -------------------------------------------------------
-    def reset(self, seed=None, options=None):
+    def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
-        self.current_step        = 0
-        self.initial_balance     = settings.INITIAL_BALANCE
-        self.balance             = self.initial_balance
-        self.position            = 0.0
-        self.entry_price         = 0.0
-        self.bars_in_trade       = 0
+        self.current_step         = 0
+        self.initial_balance      = settings.INITIAL_BALANCE
+        self.balance              = self.initial_balance
+        self.position             = 0.0
+        self.entry_price          = 0.0
+        self.bars_in_trade        = 0
+        self.last_action          = 0
         self.prev_portfolio_value = self.initial_balance
         return self._next_observation(), {}
 
@@ -81,17 +82,23 @@ class TradingEnv(gym.Env):
         obs           = self.features[self.current_step].copy()
         current_price = self.df.loc[self.current_step, "Close"]
 
-        unrealized_pnl_pct = (
+        portfolio_value    = self.balance + (self.position * current_price)
+        cash_ratio         = self.balance / (self.initial_balance + 1e-8)
+        position_size      = (self.position * current_price) / (self.initial_balance + 1e-8)
+        inventory_fraction = (self.position * current_price) / (portfolio_value + 1e-8)
+        unrealized_pnl     = (
             (current_price - self.entry_price) / (self.entry_price + 1e-8)
             if self.position > 0 else 0.0
         )
-        cash_ratio = self.balance / self.initial_balance
+        max_action = 4 if settings.ACTION_SPACE_TYPE == "discrete_5" else 2
+        last_action_norm = self.last_action / max_action
 
         portfolio_features = np.array([
-            1.0 if self.position > 0 else 0.0,
-            unrealized_pnl_pct,
             cash_ratio,
-            min(self.bars_in_trade / settings.MAX_BARS_NORMALIZATION, 1.0),
+            position_size,
+            inventory_fraction,
+            unrealized_pnl,
+            last_action_norm,
         ])
 
         return np.hstack((obs, portfolio_features)).astype(np.float32)
@@ -134,12 +141,16 @@ class TradingEnv(gym.Env):
             if action == 1:  # Buy All
                 if self.balance > 0:
                     investment        = self.balance * settings.CASH_RISK_FRACTION
-                    actual_buy_price  = current_price * (1 + settings.SLIPPAGE_PCT)
-                    self.position     = investment / actual_buy_price
-                    self.balance     -= investment
-                    self.entry_price  = actual_buy_price
-                    self.bars_in_trade = 1
-                    penalty           -= 0.01
+                    min_investment    = settings.INITIAL_BALANCE * settings.MIN_INVESTMENT_FRACTION
+                    if investment < min_investment:
+                        penalty -= settings.INVALID_ACTION_PENALTY  # Effectively out of cash
+                    else:
+                        actual_buy_price  = current_price * (1 + settings.SLIPPAGE_PCT)
+                        self.position     = investment / actual_buy_price
+                        self.balance     -= investment
+                        self.entry_price  = actual_buy_price
+                        self.bars_in_trade = 1
+                        penalty           -= 0.01
                 else:
                     penalty -= settings.INVALID_ACTION_PENALTY  # Buy with no cash
 
@@ -162,17 +173,21 @@ class TradingEnv(gym.Env):
 
             if action in [3, 4]:  # Buy 50% or 100%
                 if self.balance > 0:
-                    fraction     = 1.0 if action == 4 else 0.5
-                    investment   = (self.balance * fraction) * settings.CASH_RISK_FRACTION
-                    actual_buy_price = current_price * (1 + settings.SLIPPAGE_PCT)
-                    new_shares   = investment / actual_buy_price
+                    fraction       = 1.0 if action == 4 else 0.5
+                    investment     = (self.balance * fraction) * settings.CASH_RISK_FRACTION
+                    min_investment = settings.INITIAL_BALANCE * settings.MIN_INVESTMENT_FRACTION
+                    if investment < min_investment:
+                        penalty -= settings.INVALID_ACTION_PENALTY  # Effectively out of cash
+                    else:
+                        actual_buy_price = current_price * (1 + settings.SLIPPAGE_PCT)
+                        new_shares   = investment / actual_buy_price
 
-                    total_cost       = (self.position * self.entry_price) + investment
-                    self.position   += new_shares
-                    self.entry_price = total_cost / self.position if self.position > 0 else 0.0
-                    self.balance    -= investment
-                    self.bars_in_trade = 1 if self.bars_in_trade == 0 else self.bars_in_trade
-                    penalty -= 0.01 if action == 4 else 0.005
+                        total_cost       = (self.position * self.entry_price) + investment
+                        self.position   += new_shares
+                        self.entry_price = total_cost / self.position if self.position > 0 else 0.0
+                        self.balance    -= investment
+                        self.bars_in_trade = 1 if self.bars_in_trade == 0 else self.bars_in_trade
+                        penalty -= 0.01 if action == 4 else 0.005
                 else:
                     penalty -= settings.INVALID_ACTION_PENALTY
 
@@ -211,6 +226,8 @@ class TradingEnv(gym.Env):
         # 2. Execute agent action only if SL/TP didn't already close the position
         if not sl_tp_triggered:
             reward += self._execute_trade(action, current_price)
+
+        self.last_action = action
 
         # 3. Calculate portfolio value and step return
         current_portfolio_value = self.balance + (self.position * current_price)

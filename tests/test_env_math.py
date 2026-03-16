@@ -19,7 +19,7 @@ def test_environment_math():
 
     # 2. FAKE DATA: We control the future.
     df = pd.DataFrame({'Close': [100.0, 110.0, 99.0, 105.0, 102.0]})
-    features = np.zeros((5, 16))
+    features = np.zeros((5, settings.EXPECTED_MARKET_FEATURES))
 
     env = TradingEnv(df, features)
     env.reset()
@@ -68,6 +68,7 @@ def test_environment_math():
     # 🧪 TEST 5: 5-Action Space (Partial Buys)
     # ==========================================
     settings.ACTION_SPACE_TYPE = "discrete_5"
+    settings.EXPECTED_MARKET_FEATURES = features.shape[1]
     env = TradingEnv(df, features)
     env.reset()
 

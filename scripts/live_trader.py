@@ -220,7 +220,7 @@ def _build_live_feature_dataframe() -> pd.DataFrame:
         news_df = load_raw_news()
         sentiment_df = build_news_sentiment(news_df, timeframe=settings.TIMEFRAME)
     else:
-        sentiment_df = pd.DataFrame(columns=["Date", "Sentiment_EMA", "News_Intensity"])
+        sentiment_df = pd.DataFrame(columns=["Date", "Sentiment_Mean", "News_Intensity"])
 
     macro_df = _download_recent_macro(settings.TIMEFRAME)
 

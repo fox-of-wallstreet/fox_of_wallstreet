@@ -27,7 +27,7 @@ TIMEFRAME = "1h"   # Options: "1h", "1d"
 # ==========================================
 ACTION_SPACE_TYPE = "discrete_5"   # Options: "discrete_3", "discrete_5"
 INITIAL_BALANCE = 10_000.0          # Start capital. Typical: 1_000 to 100_000.
-CASH_RISK_FRACTION = 0.70           # Position sizing per buy. Typical: 0.30 to 1.00. Lower = safer.
+CASH_RISK_FRACTION = 0.65           # Position sizing per buy. Typical: 0.30 to 1.00. Lower = safer.
 
 # ==========================================
 # 3. REWARD & RISK
@@ -38,7 +38,8 @@ BANKRUPTCY_PENALTY = 10.0           # Extra negative reward on bankruptcy. Typic
 STOP_LOSS_PCT = 0.20                # Forced close when unrealized PnL <= -value. Typical: 0.05 to 0.30.
 TAKE_PROFIT_PCT = 0.30              # Forced close when unrealized PnL >= value. Use large value to effectively disable TP.
 SLIPPAGE_PCT = 0.0005               # Execution friction. Typical intraday stress range: 0.0005 to 0.002.
-INVALID_ACTION_PENALTY = 0.05       # Penalty for impossible actions (e.g., sell with no shares). Typical: 0.01 to 0.10.
+INVALID_ACTION_PENALTY = 0.08       # Penalty for impossible actions (e.g., sell with no shares). Typical: 0.01 to 0.10.
+MIN_INVESTMENT_FRACTION = 0.001     # Minimum meaningful buy as fraction of INITIAL_BALANCE ($10 on $10k). Buys below this get invalid-action penalty.
 MAX_BARS_NORMALIZATION = 100        # Normalizer for bars_in_trade feature. Typical: 50 to 300.
 
 # ==========================================
@@ -61,13 +62,17 @@ _BASE_FEATURES = [
     "Volume_Z_Score",
     "RSI",
     "MACD_Hist",
-    "BB_Pct",
     "ATR_Pct",
+    "Dist_MA_Slow",
+    "Realized_Vol_Short",
+    "Vol_Regime",
+    "AVWAP_Dist",
+    "AVWAP_Dist_ATR",
 ]
 
-_NEWS_FEATURES  = ["Sentiment_EMA", "News_Intensity"]                          if USE_NEWS_FEATURES  else []
-_TIME_FEATURES  = ["Sin_Time", "Cos_Time", "Mins_to_Close"]                    if USE_TIME_FEATURES  else []
-_MACRO_FEATURES = ["QQQ_Ret", "ARKK_Ret", "Rel_Strength_QQQ", "VIX_Level", "TNX_Level"] if USE_MACRO_FEATURES else []
+_NEWS_FEATURES  = ["Sentiment_Mean", "News_Intensity"]                        if USE_NEWS_FEATURES  else []
+_TIME_FEATURES  = ["Sin_Time", "Cos_Time"]                                    if USE_TIME_FEATURES  else []
+_MACRO_FEATURES = ["QQQ_Ret", "Rel_Strength_QQQ", "VIX_Z", "TNX_Z"]          if USE_MACRO_FEATURES else []
 
 FEATURES_LIST = _BASE_FEATURES + _MACRO_FEATURES + _NEWS_FEATURES + _TIME_FEATURES
 EXPECTED_MARKET_FEATURES = len(FEATURES_LIST)
@@ -75,17 +80,30 @@ EXPECTED_MARKET_FEATURES = len(FEATURES_LIST)
 # ==========================================
 # 6. TECHNICAL INDICATOR PARAMS
 # ==========================================
-RSI_WINDOW       = 14
-MACD_FAST        = 12
-MACD_SLOW        = 26
-MACD_SIGNAL      = 9
+RSI_WINDOW        = 14
+MACD_FAST         = 12
+MACD_SLOW         = 26
+MACD_SIGNAL       = 9
 VOLATILITY_WINDOW = 20
-NEWS_EMA_SPAN    = 5
+MA_SLOW_WINDOW    = 50    # For Dist_MA_Slow
+VOL_SHORT_WINDOW  = 10    # For Realized_Vol_Short
+VOL_LONG_WINDOW   = 30    # For Vol_Regime denominator
+NEWS_EMA_SPAN     = 5     # Kept for build_news_sentiment internal use
+
+# ==========================================
+# AVWAP PARAMS
+# ==========================================
+AVWAP_PIVOT_LEFT_H  = 5    # Hourly: bars to the left for pivot detection
+AVWAP_PIVOT_RIGHT_H = 5    # Hourly: bars to the right for pivot confirmation
+AVWAP_PIVOT_LEFT_D  = 3    # Daily: bars to the left for pivot detection
+AVWAP_PIVOT_RIGHT_D = 3    # Daily: bars to the right for pivot confirmation
+AVWAP_ATR_K_H       = 0.75 # Hourly ATR significance multiplier
+AVWAP_ATR_K_D       = 1.0  # Daily ATR significance multiplier
 
 # ==========================================
 # 7. TRAINING
 # ==========================================
-TOTAL_TIMESTEPS = 1_000_000
+TOTAL_TIMESTEPS = 200_000  # Best observed for TSLA 1h discrete_5 (Mogens)
 LEARNING_RATE   = 3e-4
 ENT_COEF        = 0.01
 N_STACK         = 5
@@ -98,7 +116,7 @@ USE_OPTUNA_BEST_PARAMS = True
 OPTUNA_STUDY_NAME      = f"ppo_{SYMBOL.lower()}_{TIMEFRAME}"
 OPTUNA_DB_PATH         = os.path.join(BASE_DIR, "artifacts", "optuna_study.db")
 OPTUNA_TRIALS          = 20
-OPTUNA_EVAL_TIMESTEPS  = 20_000
+OPTUNA_EVAL_TIMESTEPS  = 75_000  # ~25% of TOTAL_TIMESTEPS — enough for meaningful trial differentiation
 
 # ==========================================
 # 9. EXPERIMENT NAMING (Hybrid: readable + timestamp)
@@ -126,8 +144,7 @@ RAW_MACRO_CSV  = os.path.join(RAW_DATA_DIR, f"{SYMBOL.lower()}_{TIMEFRAME}_macro
 
 # Macro symbols and output column names used by scripts/macro_engine.py
 MACRO_SYMBOL_MAP = {
-    "QQQ": "QQQ_Close",
-    "ARKK": "ARKK_Close",
+    "QQQ":  "QQQ_Close",
     "^VIX": "VIX_Close",
     "^TNX": "TNX_Close",
 }

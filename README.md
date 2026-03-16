@@ -119,6 +119,8 @@ What changed:
 - Zero-division guard added to portfolio return denominator (`+ 1e-8`).
 - Observation shape is dynamic:
   - `self.num_features = self.features.shape[1] + NUM_PORTFOLIO_FEATURES`
+- Portfolio state observation updated to 5 features: `cash_ratio`, `position_size`, `inventory_fraction`, `unrealized_pnl`, `last_action`.
+- `last_action` is normalized by max action index so it stays in `[0, 1]`.
 
 ### scripts/train.py
 
@@ -221,7 +223,7 @@ This is automatic and end-to-end:
 4. `prepare_features()` scales exactly those columns.
 5. `TradingEnv` validates `features.shape[1] == settings.EXPECTED_MARKET_FEATURES`.
 6. Observation width updates dynamically with portfolio state:
-   - `self.num_features = features.shape[1] + 4`
+   - `self.num_features = features.shape[1] + 5`
 7. PPO receives the correct observation shape via `spaces.Box(shape=(self.num_features,))`.
 
 No manual shape edits are required anywhere.
@@ -253,7 +255,7 @@ Step 3. Add it to `_BASE_FEATURES` in `config/settings.py`:
 ```python
 _BASE_FEATURES = [
     "Log_Return", "Volume_Z_Score", "RSI",
-    "MACD_Hist", "BB_Pct", "ATR_Pct",
+    "MACD_Hist", "ATR_Pct",
     "OBV",
 ]
 ```

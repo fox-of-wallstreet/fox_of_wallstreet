@@ -199,5 +199,3 @@ This baseline keeps a compact set of features that are normalized, relatively st
 - `VIX_Z` and `TNX_Z` are intended for daily bars only under your current data setup.
 - `Sentiment_Mean` is kept, while `Sentiment_EMA` is intentionally removed from the baseline to avoid adding an overly persistent news feature.
 - `Mins_to_Close` is intentionally excluded from the baseline because `Sin_Time` and `Cos_Time` already encode general intraday seasonality, and the countdown-to-close feature is more useful as a later ablation if close-specific behavior becomes important. [econ.kobe-u.ac](https://www.econ.kobe-u.ac.jp/wp/wp-content/uploads/2023/06/1722.pdf)
-
-If you want, I can next turn this into an even cleaner **final feature reference doc** with the exact same style as your original file, including a short “why kept” line under each category.

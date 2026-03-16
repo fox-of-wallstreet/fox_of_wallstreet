@@ -1,10 +1,6 @@
+.git
 raw_data/
 .env
-artifacts/
-
-# Project-generated outputs
-data/raw/
-data/intermediate/
 artifacts/
 
 # OS generated files #
@@ -34,7 +30,6 @@ mlruns
 *.vscode
 
 # Specific Challenges
-06-Deep-Learning/03-Convolutional-Neural-Networks/04-Transfer-Learning/flowers/
 
 # Challengify - test challengification files
 *_challengify*

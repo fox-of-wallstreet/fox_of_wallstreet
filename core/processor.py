@@ -6,7 +6,20 @@ from sklearn.preprocessing import RobustScaler
 from dotenv import load_dotenv
 
 from config import settings
+<<<<<<< HEAD
+from core.tools import fnline
+from config.settings import (
+    RSI_WINDOW, MACD_FAST, MACD_SLOW, MACD_SIGNAL,
+    VOLATILITY_WINDOW, SHORT_VOL_WINDOW, LONG_VOL_WINDOW,
+    MA_FAST_WINDOW, MA_SLOW_WINDOW, SCALER_PATH
+)
 
+def add_technical_indicators(df):
+    """Calculates a richer RL state space using real market, macro, and news features."""
+    print(fnline(), "📈 Calculating advanced Micro + Macro + Context indicators...")
+=======
+
+>>>>>>> 7daa4dace0a1ce7ecaa224d0aedcd641f8074485
 
 # ==========================================
 # PRIVATE COMPUTE FUNCTIONS
@@ -140,8 +153,21 @@ def _compute_sin_time(df):
         mins = df["Date"].dt.hour * 60 + df["Date"].dt.minute
         df["Sin_Time"] = np.sin(2 * np.pi * mins / 1440.0)
     else:
+<<<<<<< HEAD
+        raise ValueError(f"{fnline()} Unsupported TIMEFRAME: {settings.TIMEFRAME}")
+
+    # Clean up intermediate/raw columns
+    cols_to_drop = [
+        'ATR', 'Open', 'High', 'Low', 'Volume',
+        'VIX_Close', 'QQQ_Close', 'ARKK_Close', 'TNX_Close'
+    ]
+    df = df.drop(columns=cols_to_drop, errors='ignore')
+
+    return df.dropna().reset_index(drop=True)
+=======
         df["Sin_Time"] = np.sin(2 * np.pi * df["Date"].dt.dayofweek / 7.0)
     return df
+>>>>>>> 7daa4dace0a1ce7ecaa224d0aedcd641f8074485
 
 
 def _compute_cos_time(df):
@@ -401,6 +427,22 @@ def prepare_features(df, features_list=None, is_training=True):
     data_to_scale = df[features_list].replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
     if is_training:
+<<<<<<< HEAD
+        print(fnline(), "⚖️ Fitting new RobustScaler...")
+        scaler = RobustScaler()
+        scaled_data = scaler.fit_transform(df[features_list])
+
+        os.makedirs(os.path.dirname(SCALER_PATH), exist_ok=True)
+        joblib.dump(scaler, SCALER_PATH)
+        print(fnline(), f"✅ Scaler saved to {SCALER_PATH}")
+    else:
+        if not os.path.exists(SCALER_PATH):
+            raise FileNotFoundError(f"{fnline()} ❌ No scaler found at {SCALER_PATH}. Train the model first!")
+
+        print(fnline(), "⚖️ Loading existing RobustScaler for inference...")
+        scaler = joblib.load(SCALER_PATH)
+        scaled_data = scaler.transform(df[features_list])
+=======
         scaler      = RobustScaler()
         scaled_data = scaler.fit_transform(data_to_scale)
         os.makedirs(os.path.dirname(settings.SCALER_PATH), exist_ok=True)
@@ -413,6 +455,7 @@ def prepare_features(df, features_list=None, is_training=True):
         scaled_data = scaler.transform(data_to_scale)
 
     return pd.DataFrame(scaled_data, columns=features_list, index=df.index)
+>>>>>>> 7daa4dace0a1ce7ecaa224d0aedcd641f8074485
 
 
 # ==========================================

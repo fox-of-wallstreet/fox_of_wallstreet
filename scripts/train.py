@@ -15,6 +15,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import settings
+from core.tools import fnline
 from core.experiment_journal import log_training_run
 from core.processor import build_training_dataset, prepare_features
 from core.environment import TradingEnv
@@ -50,7 +51,7 @@ def _load_train_checkpoint_if_compatible():
     if not os.path.exists(settings.TRAIN_FEATURES_CSV):
         return None
     if not os.path.exists(settings.TRAIN_FEATURES_SIGNATURE_JSON):
-        print("⚠️ Train checkpoint signature missing; rebuilding train features.")
+        print(fnline(), "⚠️ Train checkpoint signature missing; rebuilding train features.")
         return None
 
     with open(settings.TRAIN_FEATURES_SIGNATURE_JSON, "r") as f:
@@ -58,10 +59,10 @@ def _load_train_checkpoint_if_compatible():
 
     current_signature = _train_dataset_signature()
     if saved_signature != current_signature:
-        print("⚠️ Train checkpoint signature mismatch; rebuilding train features.")
+        print(fnline(), "⚠️ Train checkpoint signature mismatch; rebuilding train features.")
         return None
 
-    print("⚡ Loaded train features from compatible checkpoint.")
+    print(fnline(), "⚡ Loaded train features from compatible checkpoint.")
     return pd.read_csv(settings.TRAIN_FEATURES_CSV, parse_dates=["Date"])
 
 
@@ -82,7 +83,7 @@ def _resolve_ppo_params():
         return params
 
     if not os.path.exists(settings.OPTUNA_DB_PATH):
-        print("⚠️ USE_OPTUNA_BEST_PARAMS=True but Optuna DB not found; using settings defaults.")
+        print(fnline(), "⚠️ USE_OPTUNA_BEST_PARAMS=True but Optuna DB not found; using settings defaults.")
         return params
 
     try:
@@ -98,15 +99,15 @@ def _resolve_ppo_params():
         if "ent_coef" in best:
             params["ent_coef"] = float(best["ent_coef"])
 
-        print(f"✅ Loaded Optuna best params from {settings.OPTUNA_DB_PATH}")
+        print(fnline(), f"✅ Loaded Optuna best params from {settings.OPTUNA_DB_PATH}")
     except Exception as exc:
-        print(f"⚠️ Could not load Optuna best params ({exc}); using settings defaults.")
+        print(fnline(), f"⚠️ Could not load Optuna best params ({exc}); using settings defaults.")
 
     return params
 
 
 def run_training():
-    print(f"🚀 INITIATING TRAINING: {settings.EXPERIMENT_NAME}")
+    print(fnline(), f"🚀 INITIATING TRAINING: {settings.EXPERIMENT_NAME}")
     os.makedirs(settings.ARTIFACT_DIR, exist_ok=True)
 
     # -------------------------------------------------------
@@ -121,7 +122,7 @@ def run_training():
         train_df = build_training_dataset()
         _write_train_signature()
 
-    print(f"📅 Training data: {len(train_df)} rows | "
+    print(fnline(), f"📅 Training data: {len(train_df)} rows | "
           f"{settings.TRAIN_START_DATE} → {settings.TRAIN_END_DATE}")
 
     # -------------------------------------------------------
@@ -159,7 +160,7 @@ def run_training():
     # 5. Save model
     # -------------------------------------------------------
     model.save(settings.MODEL_PATH)
-    print(f"🧠 Model saved → {settings.MODEL_PATH}")
+    print(fnline(), f"🧠 Model saved → {settings.MODEL_PATH}")
 
     # -------------------------------------------------------
     # 6. Save MLOps metadata receipt
@@ -191,8 +192,8 @@ def run_training():
 
     log_training_run(metadata, settings.ARTIFACT_DIR)
 
-    print(f"🧾 Metadata receipt → {settings.METADATA_PATH}")
-    print(f"✅ Training complete. Artifacts in: {settings.ARTIFACT_DIR}")
+    print(fnline(), f"🧾 Metadata receipt → {settings.METADATA_PATH}")
+    print(fnline(), f"✅ Training complete. Artifacts in: {settings.ARTIFACT_DIR}")
 
 
 if __name__ == "__main__":

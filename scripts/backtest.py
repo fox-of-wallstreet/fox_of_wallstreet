@@ -12,6 +12,8 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from core.tools import fnline
+
 from config import settings
 from core.experiment_journal import log_backtest_result
 from core.environment import TradingEnv
@@ -115,16 +117,16 @@ def _maybe_plot_backtest_actions(test_df: pd.DataFrame, ledger_path: str, save_p
     try:
         import matplotlib.pyplot as plt
     except Exception as exc:
-        print(f"⚠️ Plot requested but matplotlib is unavailable: {exc}")
+        print(fnline(), "⚠️ Plot requested but matplotlib is unavailable: {exc}")
         return
 
     if not os.path.exists(ledger_path):
-        print("⚠️ No ledger found. Skipping backtest plot.")
+        print(fnline(), "⚠️ No ledger found. Skipping backtest plot.")
         return
 
     ledger = pd.read_csv(ledger_path)
     if ledger.empty:
-        print("⚠️ Ledger is empty. Skipping backtest plot.")
+        print(fnline(), "⚠️ Ledger is empty. Skipping backtest plot.")
         return
 
     df_plot = test_df.copy()
@@ -151,7 +153,7 @@ def _maybe_plot_backtest_actions(test_df: pd.DataFrame, ledger_path: str, save_p
     plt.tight_layout()
     plt.savefig(save_path, dpi=150)
     plt.close()
-    print(f"📉 Backtest action plot saved to {save_path}")
+    print(fnline(), f"📉 Backtest action plot saved to {save_path}")
 
 
 def _ensure_reports_dirs(run_dir: str) -> dict:
@@ -219,7 +221,7 @@ def _write_backtest_reports(equity_df: pd.DataFrame, ledger_path: str, reports_p
     try:
         import matplotlib.pyplot as plt
     except Exception as exc:
-        print(f"⚠️ Skipping plots: matplotlib unavailable ({exc})")
+        print(fnline(), f"⚠️ Skipping plots: matplotlib unavailable ({exc})")
         return generated
 
     df_plot = equity_df.copy()
@@ -364,7 +366,7 @@ def _resolve_trained_artifact_paths():
     resolved_scaler_path = os.path.join(latest_run_dir, "scaler.pkl")
     resolved_ledger_path = os.path.join(latest_run_dir, "backtest_ledger.csv")
     resolved_metadata_path = os.path.join(latest_run_dir, "metadata.json")
-    print(f"ℹ️ Using latest compatible artifact run: {latest_run_dir}")
+    print(fnline(), f"ℹ️ Using latest compatible artifact run: {latest_run_dir}")
     return (
         resolved_model_path,
         resolved_scaler_path,
@@ -376,7 +378,7 @@ def _resolve_trained_artifact_paths():
 def _validate_backtest_compatibility(metadata_path):
     """Fail fast when current runtime settings differ from training run settings."""
     if not os.path.exists(metadata_path):
-        print(f"⚠️ Metadata file not found at {metadata_path}; skipping compatibility check.")
+        print(fnline(), f"⚠️ Metadata file not found at {metadata_path}; skipping compatibility check.")
         return
 
     with open(metadata_path, "r") as f:
@@ -412,7 +414,7 @@ def _validate_backtest_compatibility(metadata_path):
         lines.append("Align config/settings.py with the trained run, or retrain with current settings.")
         raise ValueError("\n".join(lines))
 
-    print("✅ Backtest compatibility check passed against training metadata.")
+    print(fnline(), "✅ Backtest compatibility check passed against training metadata.")
 
 
 def _scale_with_resolved_scaler(df, scaler_path):
@@ -458,7 +460,7 @@ def _load_test_checkpoint_if_compatible():
     if not os.path.exists(settings.TEST_FEATURES_CSV):
         return None
     if not os.path.exists(settings.TEST_FEATURES_SIGNATURE_JSON):
-        print("⚠️ Test checkpoint signature missing; rebuilding test features.")
+        print(fnline(), "⚠️ Test checkpoint signature missing; rebuilding test features.")
         return None
 
     with open(settings.TEST_FEATURES_SIGNATURE_JSON, "r") as f:
@@ -466,10 +468,10 @@ def _load_test_checkpoint_if_compatible():
 
     current_signature = _test_dataset_signature()
     if saved_signature != current_signature:
-        print("⚠️ Test checkpoint signature mismatch; rebuilding test features.")
+        print(fnline(), "⚠️ Test checkpoint signature mismatch; rebuilding test features.")
         return None
 
-    print("⚡ Loaded test features from compatible checkpoint.")
+    print(fnline(), "⚡ Loaded test features from compatible checkpoint.")
     return pd.read_csv(settings.TEST_FEATURES_CSV, parse_dates=["Date"])
 
 
@@ -509,13 +511,13 @@ def _build_or_load_test_dataset():
     os.makedirs(os.path.dirname(settings.TEST_FEATURES_CSV), exist_ok=True)
     test_df.to_csv(settings.TEST_FEATURES_CSV, index=False)
     _write_test_signature()
-    print(f"✅ Test features checkpoint saved to {settings.TEST_FEATURES_CSV}")
+    print(fnline(), f"✅ Test features checkpoint saved to {settings.TEST_FEATURES_CSV}")
     return test_df
 
 
 def run_backtest():
     """Run deterministic backtest using the trained model and saved scaler."""
-    print(f"🧪 STARTING BACKTEST: {settings.EXPERIMENT_NAME}")
+    print(fnline(), f"🧪 STARTING BACKTEST: {settings.EXPERIMENT_NAME}")
 
     model_base_path, scaler_path, ledger_path, metadata_path = _resolve_trained_artifact_paths()
     model_path = f"{model_base_path}.zip"
@@ -524,7 +526,7 @@ def run_backtest():
     _validate_backtest_compatibility(metadata_path)
 
     test_df = _build_or_load_test_dataset()
-    print(f"📅 Testing data: {len(test_df)} rows | {settings.TEST_START_DATE} → {settings.TEST_END_DATE}")
+    print(fnline(), f"📅 Testing data: {len(test_df)} rows | {settings.TEST_START_DATE} → {settings.TEST_END_DATE}")
 
     # Use the scaler fitted in the same resolved training run.
     scaled_features = _scale_with_resolved_scaler(test_df, scaler_path)
@@ -534,7 +536,7 @@ def run_backtest():
     env = VecFrameStack(vec_env, n_stack=settings.N_STACK)
 
     model = PPO.load(model_base_path, env=env)
-    print(f"🧠 Loaded trained model from {model_path}")
+    print(fnline(), f"🧠 Loaded trained model from {model_path}")
 
     obs = env.reset()
     done = False
@@ -555,7 +557,7 @@ def run_backtest():
         }
 
     prev_position = float(env.get_attr("position")[0])
-    print("📈 Simulating deterministic policy...")
+    print(fnline(), "📈 Simulating deterministic policy...")
 
     while not done:
         action, _ = model.predict(obs, deterministic=True)
@@ -614,7 +616,7 @@ def run_backtest():
     if trade_history:
         df_trades = pd.DataFrame(trade_history)
         df_trades.to_csv(ledger_path, index=False)
-        print(f"💾 Ledger saved to {ledger_path}")
+        print(fnline(), f"💾 Ledger saved to {ledger_path}")
     else:
         pd.DataFrame(
             columns=[
@@ -627,7 +629,7 @@ def run_backtest():
                 "SL_TP_Triggered",
             ]
         ).to_csv(ledger_path, index=False)
-        print("ℹ️ No trade events were logged for this backtest run.")
+        print(fnline(), "ℹ️ No trade events were logged for this backtest run.")
 
     # Legacy root-level plot, kept for backward compatibility if setting is enabled.
     _maybe_plot_backtest_actions(
@@ -638,7 +640,7 @@ def run_backtest():
 
     equity_df = pd.DataFrame(equity_history)
     report_artifacts = _write_backtest_reports(equity_df, ledger_path, reports_paths)
-    print(f"📁 Backtest report bundle saved under {reports_paths['reports_dir']}")
+    print(fnline(), f"📁 Backtest report bundle saved under {reports_paths['reports_dir']}")
 
     ledger_metrics = _analyze_trade_ledger(ledger_path)
     trades_per_100_bars = (ledger_metrics["n_transactions"] / total_steps) * 100 if total_steps > 0 else 0.0
@@ -650,28 +652,28 @@ def run_backtest():
         _lbl = _evt["Action"]
         action_counts[_lbl] = action_counts.get(_lbl, 0) + 1
 
-    print("=" * 60)
-    print(f"🏆 BACKTEST RESULTS: {settings.EXPERIMENT_NAME}")
-    print(f"   Final Portfolio Value : ${final_val:.2f}")
-    print(f"   Total Return          : {total_return:.2f}%")
-    print(f"   Total Bars Evaluated  : {total_steps}")
-    print(f"   Trades / 100 bars     : {trades_per_100_bars:.1f}")
+    print(fnline(), "=" * 60)
+    print(fnline(), f"🏆 BACKTEST RESULTS: {settings.EXPERIMENT_NAME}")
+    print(fnline(), f"   Final Portfolio Value : ${final_val:.2f}")
+    print(fnline(), f"   Total Return          : {total_return:.2f}%")
+    print(fnline(), f"   Total Bars Evaluated  : {total_steps}")
+    print(fnline(), f"   Trades / 100 bars     : {trades_per_100_bars:.1f}")
     print()
-    print(   "   Action Breakdown:")
+    print(fnline(), "   Action Breakdown:")
     for _lbl in _action_order:
         _cnt = action_counts.get(_lbl, 0)
         if _cnt:
-            print(f"     {_lbl:<16}: {_cnt}")
+            print(fnline(), f"     {_lbl:<16}: {_cnt}")
     for _lbl, _cnt in action_counts.items():
         if _lbl not in _action_order:
-            print(f"     {_lbl:<16}: {_cnt}")
-    print(f"   Total Events          : {len(trade_history)}")
+            print(fnline(), f"     {_lbl:<16}: {_cnt}")
+    print(fnline(), f"   Total Events          : {len(trade_history)}")
     print()
-    print(f"   Completed Cycles      : {ledger_metrics['n_completed_cycles']}")
-    print(f"   Avg Hold (bars)       : {ledger_metrics['avg_holding_duration_bars']:.1f}")
-    print(f"   Avg PnL / Cycle       : ${ledger_metrics['avg_pnl_per_cycle_dollars']:.2f}")
-    print(f"   Avg Return / Cycle    : {ledger_metrics['avg_return_per_cycle_pct']:.2f}%")
-    print("=" * 60)
+    print(fnline(), f"   Completed Cycles      : {ledger_metrics['n_completed_cycles']}")
+    print(fnline(), f"   Avg Hold (bars)       : {ledger_metrics['avg_holding_duration_bars']:.1f}")
+    print(fnline(), f"   Avg PnL / Cycle       : ${ledger_metrics['avg_pnl_per_cycle_dollars']:.2f}")
+    print(fnline(), f"   Avg Return / Cycle    : {ledger_metrics['avg_return_per_cycle_pct']:.2f}%")
+    print(fnline(), "=" * 60)
     # ──────────────────────────────────────────────────────────────────────
 
     summary_path = os.path.join(os.path.dirname(ledger_path), "backtest_summary.json")
@@ -717,8 +719,8 @@ def run_backtest():
         json.dump(backtest_summary, f, indent=2)
     with open(report_index_path, "w") as f:
         json.dump(backtest_summary, f, indent=2)
-    print(f"🧾 Backtest summary saved to {summary_path}")
-    print(f"🧾 Backtest report index saved to {report_index_path}")
+    print(fnline(), f"🧾 Backtest summary saved to {summary_path}")
+    print(fnline(), f"🧾 Backtest report index saved to {report_index_path}")
 
     log_backtest_result(
         run_id=run_id,

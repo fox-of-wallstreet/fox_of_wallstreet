@@ -296,6 +296,36 @@ python scripts/train.py
 
 Single control plane, deterministic data flow, explicit checkpoints, and artifact-level reproducibility for every experiment run.
 
+
+## Training diagnostics (`training_evaluate.py`)
+
+`training_evaluate.py` generates training diagnostic plots from the Stable-Baselines3 TensorBoard logs created during training.
+
+By default, it analyzes the **latest compatible experiment run** in the `artifacts/` directory:
+
+```bash
+python scripts/training_evaluate.py
+```
+
+The diagnostics are saved inside the corresponding artifact folder:
+
+```
+artifacts/<experiment_name>/training_diagnostics/
+    plots/
+    csv/
+```
+
+### Evaluating a specific run
+
+To analyze a **specific previous experiment**, provide the artifact folder explicitly:
+
+```bash
+python scripts/training_evaluate.py --artifact-dir artifacts/<your_exact_run_folder>
+```
+
+The script reads the TensorBoard logs from that run and saves the diagnostics in the same artifact directory.
+
+
 ## Additional Guide
 
 For practical tuning workflows, see EXPERIMENT_PLAYBOOK.md.

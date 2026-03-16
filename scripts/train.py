@@ -11,7 +11,7 @@ import math
 
 import pandas as pd
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
+from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack, VecMonitor
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -154,6 +154,7 @@ def run_training():
     # -------------------------------------------------------
     base_env = TradingEnv(df=train_df, features=scaled_features)
     vec_env  = DummyVecEnv([lambda: base_env])
+    vec_env  = VecMonitor(vec_env)
     env      = VecFrameStack(vec_env, n_stack=settings.N_STACK)
 
     # -------------------------------------------------------
@@ -161,6 +162,8 @@ def run_training():
     # All PPO params come from settings — change them there, not here.
     # -------------------------------------------------------
     ppo_params = _resolve_ppo_params()
+    tb_log_dir = os.path.join(settings.ARTIFACT_DIR, "tb_logs")
+    os.makedirs(tb_log_dir, exist_ok=True)
 
     model = PPO(
         "MlpPolicy",
@@ -171,8 +174,10 @@ def run_training():
         batch_size=ppo_params["batch_size"],
         gamma=ppo_params["gamma"],
         seed=settings.RANDOM_SEED,
+        tensorboard_log=tb_log_dir,
     )
-    model.learn(total_timesteps=settings.TOTAL_TIMESTEPS)
+    model.learn(total_timesteps=settings.TOTAL_TIMESTEPS,
+                tb_log_name="ppo")
 
     # -------------------------------------------------------
     # 5. Save model

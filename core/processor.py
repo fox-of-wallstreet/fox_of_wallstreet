@@ -271,14 +271,18 @@ def _load_finbert():
     return tokenizer, model, torch
 
 
+
 def score_headlines_finbert(headlines):
+    from tqdm.auto import tqdm
+    print(f"Running FinBERT sentiment scoring on {len(headlines)} headlines...")
     tokenizer, model, torch = _load_finbert()
     scores = []
-    for headline in headlines:
+    for headline in tqdm(headlines, desc="Scoring headlines with FinBERT"):
         text = str(headline).strip()
         if not text:
             scores.append(0.0)
             continue
+
         inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True)
         with torch.no_grad():
             outputs = model(**inputs)

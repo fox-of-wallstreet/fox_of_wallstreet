@@ -11,7 +11,9 @@ This script:
 import json
 import os
 import sys
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timezone, timedelta
+import argparse
 
 import joblib
 import numpy as np
@@ -60,8 +62,97 @@ def _send_telegram_alert(message: str) -> None:
         print(f"⚠️ Failed to send Telegram alert: {exc}")
 
 
+def _send_telegram_confirmation_request(message: str, state: "_BotState") -> bool:
+    """Send an inline-keyboard confirmation to Telegram and block until the owner
+    taps ✅ Confirm or ❌ Reject, or the timeout elapses.
+
+    While waiting, /mode and other commands are also processed via state.
+    """
+    token = os.getenv("TELEGRAM_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    timeout_seconds = int(os.getenv("CONFIRMATION_TIMEOUT_SECONDS", "300"))
+
+    if not token or not chat_id:
+        print("⚠️ Telegram credentials missing; order will NOT execute in secure mode.")
+        return False
+
+    base_url = f"https://api.telegram.org/bot{token}"
+
+    keyboard = {
+        "inline_keyboard": [[
+            {"text": "✅ Confirm", "callback_data": "confirm"},
+            {"text": "❌ Reject",  "callback_data": "reject"},
+        ]]
+    }
+    try:
+        resp = requests.post(
+            f"{base_url}/sendMessage",
+            json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown", "reply_markup": keyboard},
+            timeout=10,
+        )
+        if not resp.ok:
+            print(f"⚠️ Telegram confirmation send failed: {resp.text}")
+            return False
+    except Exception as exc:
+        print(f"⚠️ Telegram confirmation send error: {exc}")
+        return False
+
+    print(f"⏳ Awaiting Telegram confirmation (timeout: {timeout_seconds}s)...")
+    deadline = time.time() + timeout_seconds
+
+    while time.time() < deadline:
+        remaining = int(deadline - time.time())
+        poll_timeout = min(20, remaining)
+        if poll_timeout <= 0:
+            break
+        try:
+            poll = requests.get(
+                f"{base_url}/getUpdates",
+                params={"offset": state.update_offset, "timeout": poll_timeout},
+                timeout=poll_timeout + 5,
+            )
+            for update in poll.json().get("result", []):
+                state.update_offset = update["update_id"] + 1
+                result = _process_telegram_update(update, state, base_url, chat_id)
+                if result == "confirm":
+                    print("✅ Owner confirmed the order.")
+                    return True
+                if result == "reject":
+                    print("❌ Owner rejected the order.")
+                    return False
+        except Exception as exc:
+            print(f"⚠️ Telegram polling error: {exc}")
+            time.sleep(2)
+
+    print("⏰ Confirmation timed out — order will NOT execute.")
+    _tg_send(base_url, chat_id, "⏰ Confirmation timed out. Order *NOT* executed.")
+    return False
+
+
 def _resolve_trained_artifact_paths():
-    """Resolve model/scaler/metadata similarly to backtest's compatibility pattern."""
+    """Resolve model/scaler/metadata.
+
+    Priority:
+    1. ARTIFACT_RUN env var — pin a specific run folder by name.
+    2. settings.MODEL_PATH / SCALER_PATH if the files already exist.
+    3. Auto-resolve: latest compatible run matching current settings prefix.
+    """
+    artifact_run = os.getenv("ARTIFACT_RUN", "").strip()
+    if artifact_run:
+        run_dir = os.path.join(settings.ARTIFACTS_BASE_DIR, artifact_run)
+        model_zip = os.path.join(run_dir, "model.zip")
+        scaler_pkl = os.path.join(run_dir, "scaler.pkl")
+        if not os.path.exists(model_zip):
+            raise FileNotFoundError(f"❌ ARTIFACT_RUN='{artifact_run}' — model.zip not found at {model_zip}")
+        if not os.path.exists(scaler_pkl):
+            raise FileNotFoundError(f"❌ ARTIFACT_RUN='{artifact_run}' — scaler.pkl not found at {scaler_pkl}")
+        print(f"📌 Using pinned artifact run: {run_dir}")
+        return (
+            os.path.join(run_dir, "model"),
+            scaler_pkl,
+            os.path.join(run_dir, "metadata.json"),
+        )
+
     current_model_zip = f"{settings.MODEL_PATH}.zip"
     current_scaler = settings.SCALER_PATH
     current_metadata = settings.METADATA_PATH
@@ -239,27 +330,42 @@ def _build_live_feature_dataframe() -> pd.DataFrame:
     return features_df
 
 
-def _get_current_position_features(trading_client: TradingClient):
+def _get_current_position_features(trading_client: TradingClient, latest_price: float):
+    """Return portfolio features matching TradingEnv.NUM_PORTFOLIO_FEATURES (5):
+    [cash_ratio, position_size, inventory_fraction, unrealized_pnl, last_action_norm]
+
+    Cash is capped to settings.LIVE_TRADING_BUDGET so the agent only allocates
+    from its designated envelope, regardless of total Alpaca account size.
+    """
     account = trading_client.get_account()
-    cash = float(account.cash)
+    raw_cash = float(account.cash)
+    cash = min(raw_cash, settings.LIVE_TRADING_BUDGET)
 
     try:
         position = trading_client.get_open_position(settings.SYMBOL)
         current_shares = float(position.qty)
         entry_price = float(position.avg_entry_price)
-        unrealized_pnl_pct = float(position.unrealized_plpc) if position.unrealized_plpc is not None else 0.0
-        in_position = 1.0
+        in_position = True
     except Exception:
         current_shares = 0.0
         entry_price = 0.0
-        unrealized_pnl_pct = 0.0
-        in_position = 0.0
+        in_position = False
+
+    position_value = current_shares * latest_price
+    portfolio_value = cash + position_value
 
     cash_ratio = cash / (settings.INITIAL_BALANCE + 1e-8)
-    bars_in_trade_norm = 0.0
+    position_size = position_value / (settings.INITIAL_BALANCE + 1e-8)
+    inventory_fraction = position_value / (portfolio_value + 1e-8)
+    unrealized_pnl = (
+        (latest_price - entry_price) / (entry_price + 1e-8)
+        if in_position else 0.0
+    )
+    max_action = 4 if settings.ACTION_SPACE_TYPE == "discrete_5" else 2
+    last_action_norm = 0.0 / max_action  # no prior action known in live context
 
     portfolio_features = np.array(
-        [in_position, unrealized_pnl_pct, cash_ratio, bars_in_trade_norm],
+        [cash_ratio, position_size, inventory_fraction, unrealized_pnl, last_action_norm],
         dtype=np.float32,
     )
     return current_shares, cash, entry_price, portfolio_features
@@ -291,15 +397,182 @@ def _action_to_text(action: int) -> str:
     return mapping.get(int(action), "UNKNOWN")
 
 
-def _should_execute_orders() -> bool:
-    """Return True only when explicitly enabled via env flag."""
-    return os.getenv("LIVE_TRADER_EXECUTE", "false").strip().lower() in {"1", "true", "yes", "y"}
+# ---------------------------------------------------------------------------
+# Bot state — persists current trading mode across restarts
+# ---------------------------------------------------------------------------
+
+class _BotState:
+    """Mutable state shared across bot helpers."""
+
+    _STATE_FILE = os.path.join(settings.ARTIFACTS_BASE_DIR, ".trader_state.json")
+    VALID_MODES = ("autopilot", "secure", "simulate")
+
+    def __init__(self):
+        self.mode: str = os.getenv("TRADER_MODE", "simulate").strip().lower()
+        self.update_offset: int = 0
+        self.stop_requested: bool = False
+        self._load()
+
+    def _load(self) -> None:
+        if os.path.exists(self._STATE_FILE):
+            try:
+                with open(self._STATE_FILE) as f:
+                    data = json.load(f)
+                saved_mode = data.get("mode", self.mode)
+                if saved_mode in self.VALID_MODES:
+                    self.mode = saved_mode
+            except Exception:
+                pass
+
+    def save(self) -> None:
+        try:
+            with open(self._STATE_FILE, "w") as f:
+                json.dump({"mode": self.mode}, f)
+        except Exception as exc:
+            print(f"⚠️ Could not save trader state: {exc}")
 
 
-def _submit_action(trading_client: TradingClient, action: int, current_cash: float, current_shares: float) -> str:
+# ---------------------------------------------------------------------------
+# Telegram helpers
+# ---------------------------------------------------------------------------
+
+def _tg_send(base_url: str, chat_id: str, text: str, reply_markup=None) -> None:
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    try:
+        requests.post(f"{base_url}/sendMessage", json=payload, timeout=10)
+    except Exception as exc:
+        print(f"⚠️ Telegram send error: {exc}")
+
+
+def _tg_send_status(state: _BotState, base_url: str, chat_id: str, trading_client=None) -> None:
+    lines = [
+        "📊 *BOT STATUS*",
+        f"Mode: *{state.mode.upper()}*",
+        f"Symbol: `{settings.SYMBOL}` | `{settings.TIMEFRAME}`",
+        f"Budget: ${settings.LIVE_TRADING_BUDGET:,.0f}",
+    ]
+    if trading_client is not None:
+        try:
+            account = trading_client.get_account()
+            lines.append(f"Account cash: ${float(account.cash):,.2f}")
+            try:
+                pos = trading_client.get_open_position(settings.SYMBOL)
+                lines.append(f"Position: {pos.qty} shares @ ${float(pos.avg_entry_price):.2f}")
+                if pos.unrealized_plpc is not None:
+                    lines.append(f"Unrealized P&L: {float(pos.unrealized_plpc)*100:.2f}%")
+            except Exception:
+                lines.append("Position: none")
+        except Exception:
+            lines.append("_(could not fetch account info)_")
+    _tg_send(base_url, chat_id, "\n".join(lines))
+
+
+def _process_telegram_update(
+    update: dict,
+    state: _BotState,
+    base_url: str,
+    chat_id: str,
+    trading_client=None,
+) -> str | None:
+    """Process one Telegram update.
+
+    Returns 'confirm', 'reject', 'stop', or None.
+    Commands (/mode, /status, /stop, /help) are handled as side-effects.
+    """
+    cb = update.get("callback_query")
+    if cb and cb.get("data") in ("confirm", "reject"):
+        try:
+            requests.post(
+                f"{base_url}/answerCallbackQuery",
+                json={"callback_query_id": cb["id"], "text": "Received."},
+                timeout=5,
+            )
+        except Exception:
+            pass
+        return cb["data"]
+
+    msg = update.get("message") or update.get("edited_message")
+    if not msg:
+        return None
+    if str(msg.get("chat", {}).get("id", "")) != str(chat_id):
+        return None
+
+    text = (msg.get("text") or "").strip()
+
+    if text.startswith("/mode"):
+        parts = text.split()
+        new_mode = parts[1].lower() if len(parts) >= 2 else ""
+        if new_mode in _BotState.VALID_MODES:
+            state.mode = new_mode
+            state.save()
+            _tg_send(base_url, chat_id, f"✅ Mode switched to *{new_mode.upper()}*")
+        else:
+            _tg_send(base_url, chat_id, "Usage: `/mode autopilot|secure|simulate`")
+
+    elif text == "/status":
+        _tg_send_status(state, base_url, chat_id, trading_client)
+
+    elif text == "/stop":
+        state.stop_requested = True
+        _tg_send(base_url, chat_id, "🛑 Bot stopping after the current cycle...")
+        return "stop"
+
+    elif text in ("/help", "/start"):
+        _tg_send(
+            base_url, chat_id,
+            "*Available commands:*\n"
+            "`/mode autopilot` — execute orders automatically\n"
+            "`/mode secure` — wait for your confirmation before each trade\n"
+            "`/mode simulate` — observe signals only, no orders submitted\n"
+            "`/status` — current mode, position & account info\n"
+            "`/stop` — gracefully stop the bot",
+        )
+
+    return None
+
+
+def _poll_telegram_commands_once(state: _BotState, trading_client=None) -> None:
+    """Do one 10-second long-poll for Telegram commands between agent cycles."""
+    token = os.getenv("TELEGRAM_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        time.sleep(10)
+        return
+    base_url = f"https://api.telegram.org/bot{token}"
+    try:
+        resp = requests.get(
+            f"{base_url}/getUpdates",
+            params={"offset": state.update_offset, "timeout": 10},
+            timeout=15,
+        )
+        for update in resp.json().get("result", []):
+            state.update_offset = update["update_id"] + 1
+            _process_telegram_update(update, state, base_url, chat_id, trading_client)
+    except Exception as exc:
+        print(f"⚠️ Telegram poll error: {exc}")
+        time.sleep(5)
+
+
+def _next_candle_time(timeframe: str) -> datetime:
+    """Return the UTC datetime of the next candle close + a small propagation buffer."""
+    now = datetime.now(timezone.utc)
+    if timeframe == "1h":
+        return now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1, minutes=2)
+    elif timeframe == "1d":
+        candidate = now.replace(hour=21, minute=2, second=0, microsecond=0)
+        if candidate <= now:
+            candidate += timedelta(days=1)
+        return candidate
+    else:
+        raise ValueError(f"No candle schedule defined for TIMEFRAME='{timeframe}'")
+
+
+def _submit_action(trading_client: TradingClient, action: int, current_cash: float, current_shares: float, execute: bool = False) -> str:
     min_notional = 10.0
 
-    execute_orders = _should_execute_orders()
+    execute_orders = execute
 
     if settings.ACTION_SPACE_TYPE == "discrete_3":
         if action == 1:
@@ -396,10 +669,76 @@ def _submit_action(trading_client: TradingClient, action: int, current_cash: flo
     return "HOLD"
 
 
+def _run_one_agent_cycle(
+    trading_client: TradingClient,
+    model: PPO,
+    scaler,
+    state: _BotState,
+) -> None:
+    """Build features, predict, confirm if needed, execute, notify."""
+    feature_df = _build_live_feature_dataframe()
+    missing = [c for c in settings.FEATURES_LIST if c not in feature_df.columns]
+    if missing:
+        raise ValueError(f"❌ Missing live feature columns: {missing}")
+
+    market_scaled = scaler.transform(feature_df[settings.FEATURES_LIST])
+    scaled_df = pd.DataFrame(market_scaled, columns=settings.FEATURES_LIST, index=feature_df.index)
+
+    latest_price = float(feature_df.iloc[-1]["Close"])
+    current_shares, current_cash, entry_price, portfolio_features = _get_current_position_features(trading_client, latest_price)
+    obs = _build_live_observation(scaled_df, portfolio_features)
+
+    action, _ = model.predict(obs, deterministic=True)
+    action = int(action[0]) if isinstance(action, np.ndarray) else int(action)
+    action_text = _action_to_text(action)
+
+    print(f"📊 Price: ${latest_price:.2f} | Action: {action} -> {action_text}")
+    print(f"💵 Budget cash: ${current_cash:.2f} | Shares: {current_shares:.6f}")
+
+    action_is_trade = action_text != "HOLD"
+
+    if state.mode == "secure" and action_is_trade:
+        confirm_msg = (
+            f"*⚠️ TRADE CONFIRMATION REQUIRED*\n"
+            f"Time: {_now_utc_iso()}\n"
+            f"Symbol: {settings.SYMBOL} | {settings.TIMEFRAME}\n"
+            f"Action: *{action_text}*\n"
+            f"Price: ${latest_price:.2f}\n"
+            f"Budget cash: ${current_cash:.2f}\n"
+            f"Shares held: {current_shares:.6f}\n"
+            f"Entry price: ${entry_price:.2f}\n\n"
+            f"Approve this order?"
+        )
+        execute = _send_telegram_confirmation_request(confirm_msg, state)
+    else:
+        execute = state.mode == "autopilot"
+
+    execution_result = _submit_action(trading_client, action, current_cash, current_shares, execute=execute)
+    print(f"✅ Execution result: {execution_result}")
+
+    mode_label = {"autopilot": "AUTOPILOT", "secure": "SECURE"}.get(state.mode, "SIMULATE")
+    _send_telegram_alert(
+        f"*{mode_label} PPO SIGNAL*\n"
+        f"Time: {_now_utc_iso()}\n"
+        f"Symbol: {settings.SYMBOL} | {settings.TIMEFRAME}\n"
+        f"Action: {action_text}\n"
+        f"Price: ${latest_price:.2f}\n"
+        f"Budget cash: ${current_cash:.2f}\n"
+        f"Shares: {current_shares:.6f}\n"
+        f"Entry: ${entry_price:.2f}\n"
+        f"Result: {execution_result}"
+    )
+
+
 def run_live_trader() -> None:
-    print(f"🟢 STARTING LIVE TRADER | {settings.SYMBOL} ({settings.TIMEFRAME})")
-    print(f"🧪 Order mode: {'EXECUTE' if _should_execute_orders() else 'SIMULATE'}")
+    """One-shot run: build features, predict one action, optionally execute, notify.
+    Suitable for cron-based scheduling (e.g. every 1h).
+    """
     load_dotenv()
+    state = _BotState()
+    print(f"🟢 STARTING LIVE TRADER | {settings.SYMBOL} ({settings.TIMEFRAME})")
+    print(f"🔧 Trader mode: {state.mode.upper()}")
+    print(f"💰 Trading budget: ${settings.LIVE_TRADING_BUDGET:,.0f}")
 
     alpaca_key = os.getenv("ALPACA_API_KEY")
     alpaca_secret = os.getenv("ALPACA_SECRET_KEY")
@@ -409,51 +748,112 @@ def run_live_trader() -> None:
     paper_flag = os.getenv("ALPACA_PAPER", "true").strip().lower() != "false"
     trading_client = TradingClient(alpaca_key, alpaca_secret, paper=paper_flag)
 
+    # Drain stale Telegram updates so stale callbacks don't trigger things.
+    token = os.getenv("TELEGRAM_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if token and chat_id:
+        base_url = f"https://api.telegram.org/bot{token}"
+        try:
+            drain = requests.get(f"{base_url}/getUpdates", params={"timeout": 0}, timeout=10)
+            prev = drain.json().get("result", [])
+            state.update_offset = (prev[-1]["update_id"] + 1) if prev else 0
+        except Exception:
+            pass
+
     model_base_path, scaler_path, metadata_path = _resolve_trained_artifact_paths()
     _validate_live_compatibility(metadata_path)
 
-    feature_df = _build_live_feature_dataframe()
-    missing = [c for c in settings.FEATURES_LIST if c not in feature_df.columns]
-    if missing:
-        raise ValueError(f"❌ Missing live feature columns: {missing}")
-
     scaler = joblib.load(scaler_path)
-    market_scaled = scaler.transform(feature_df[settings.FEATURES_LIST])
-    scaled_df = pd.DataFrame(market_scaled, columns=settings.FEATURES_LIST, index=feature_df.index)
-
-    current_shares, current_cash, entry_price, portfolio_features = _get_current_position_features(trading_client)
-    latest_price = float(feature_df.iloc[-1]["Close"])
-
-    obs = _build_live_observation(scaled_df, portfolio_features)
-
     print(f"🧠 Loading model from {model_base_path}.zip")
     model = PPO.load(model_base_path)
-    action, _ = model.predict(obs, deterministic=True)
-    action = int(action[0]) if isinstance(action, np.ndarray) else int(action)
-    action_text = _action_to_text(action)
 
-    print(f"📊 Latest price: ${latest_price:.2f}")
-    print(f"💼 Current shares: {current_shares:.6f}")
-    print(f"💵 Current cash: ${current_cash:.2f}")
-    print(f"🤖 PPO action: {action} -> {action_text}")
+    _run_one_agent_cycle(trading_client, model, scaler, state)
 
-    execution_result = _submit_action(trading_client, action, current_cash, current_shares)
-    print(f"✅ Execution result: {execution_result}")
 
-    alert = (
-        f"*LIVE PPO SIGNAL*\n"
-        f"Time: {_now_utc_iso()}\n"
-        f"Symbol: {settings.SYMBOL}\n"
-        f"Timeframe: {settings.TIMEFRAME}\n"
-        f"Action: {action_text}\n"
-        f"Price: ${latest_price:.2f}\n"
-        f"Cash: ${current_cash:.2f}\n"
-        f"Shares: {current_shares:.6f}\n"
-        f"Entry: ${entry_price:.2f}\n"
-        f"Result: {execution_result}"
-    )
-    _send_telegram_alert(alert)
+def run_live_trader_bot() -> None:
+    """Persistent bot: schedules agent cycles at each candle close and handles
+    Telegram commands (/mode, /status, /stop, /help) between cycles.
+
+    Model and scaler are loaded once at startup for efficiency.
+    Mode is persisted to artifacts/.trader_state.json between restarts.
+
+    Env vars:
+      ARTIFACT_RUN=<folder>         — pin a specific artifact run
+      TRADER_MODE=autopilot|secure|simulate — initial mode (overridden by /mode)
+      CONFIRMATION_TIMEOUT_SECONDS  — seconds to wait for secure-mode confirmation
+    """
+    load_dotenv()
+    state = _BotState()
+
+    print(f"🤖 STARTING LIVE TRADER BOT | {settings.SYMBOL} ({settings.TIMEFRAME})")
+    print(f"🔧 Initial mode: {state.mode.upper()}")
+    print(f"💰 Trading budget: ${settings.LIVE_TRADING_BUDGET:,.0f}")
+
+    alpaca_key = os.getenv("ALPACA_API_KEY")
+    alpaca_secret = os.getenv("ALPACA_SECRET_KEY")
+    if not alpaca_key or not alpaca_secret:
+        raise ValueError("❌ Missing ALPACA_API_KEY or ALPACA_SECRET_KEY in environment.")
+    paper_flag = os.getenv("ALPACA_PAPER", "true").strip().lower() != "false"
+    trading_client = TradingClient(alpaca_key, alpaca_secret, paper=paper_flag)
+
+    model_base_path, scaler_path, metadata_path = _resolve_trained_artifact_paths()
+    _validate_live_compatibility(metadata_path)
+    scaler = joblib.load(scaler_path)
+    print(f"🧠 Loading model from {model_base_path}.zip")
+    model = PPO.load(model_base_path)
+
+    token = os.getenv("TELEGRAM_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if token and chat_id:
+        base_url = f"https://api.telegram.org/bot{token}"
+        try:
+            drain = requests.get(f"{base_url}/getUpdates", params={"timeout": 0}, timeout=10)
+            prev = drain.json().get("result", [])
+            state.update_offset = (prev[-1]["update_id"] + 1) if prev else 0
+        except Exception as exc:
+            print(f"⚠️ Telegram drain failed: {exc}")
+        _tg_send(
+            base_url, chat_id,
+            f"🤖 *LIVE TRADER BOT STARTED*\n"
+            f"Symbol: `{settings.SYMBOL}` | `{settings.TIMEFRAME}`\n"
+            f"Mode: *{state.mode.upper()}*\n"
+            f"Budget: ${settings.LIVE_TRADING_BUDGET:,.0f}\n"
+            f"Send /help for available commands.",
+        )
+    else:
+        print("⚠️ TELEGRAM_TOKEN/TELEGRAM_CHAT_ID not set — Telegram disabled.")
+
+    while not state.stop_requested:
+        next_run = _next_candle_time(settings.TIMEFRAME)
+        print(f"⏰ Next agent cycle at: {next_run.isoformat()}")
+
+        while datetime.now(timezone.utc) < next_run and not state.stop_requested:
+            _poll_telegram_commands_once(state, trading_client)
+
+        if state.stop_requested:
+            break
+
+        print(f"🔔 Running agent cycle | {_now_utc_iso()} | mode={state.mode.upper()}")
+        try:
+            _run_one_agent_cycle(trading_client, model, scaler, state)
+        except Exception as exc:
+            errmsg = f"❌ Agent cycle error: {exc}"
+            print(errmsg)
+            _send_telegram_alert(errmsg)
+
+    _send_telegram_alert(f"🛑 Live trader bot stopped at {_now_utc_iso()}.")
+    print("🛑 Bot stopped.")
 
 
 if __name__ == "__main__":
-    run_live_trader()
+    parser = argparse.ArgumentParser(description="Fox of Wallstreet — live PPO trader")
+    parser.add_argument(
+        "--bot",
+        action="store_true",
+        help="Run as a persistent bot with Telegram control and automatic candle scheduling.",
+    )
+    args = parser.parse_args()
+    if args.bot:
+        run_live_trader_bot()
+    else:
+        run_live_trader()

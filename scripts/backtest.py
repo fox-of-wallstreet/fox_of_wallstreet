@@ -18,6 +18,8 @@ from config import settings
 from core.experiment_journal import log_backtest_result
 from core.environment import TradingEnv
 from core.processor import (
+    build_test_dataset,
+    prepare_features,
     add_technical_indicators,
     build_news_sentiment,
     load_raw_macro,
@@ -206,6 +208,7 @@ def _write_backtest_reports(equity_df: pd.DataFrame, ledger_path: str, reports_p
     generated = {
         "equity_timeseries_csv": None,
         "actions_overlay_png": None,
+        "portfolio_value_png": None,
         "equity_vs_benchmark_png": None,
         "drawdown_curve_png": None,
         "trade_return_hist_png": None,
@@ -234,9 +237,17 @@ def _write_backtest_reports(equity_df: pd.DataFrame, ledger_path: str, reports_p
     if not ledger.empty and "Date" in ledger.columns:
         ledger["Date"] = pd.to_datetime(ledger["Date"], errors="coerce")
 
+
     # 1) Actions overlay
     fig, ax = plt.subplots(figsize=(14, 7))
-    ax.plot(df_plot["Date"], df_plot["Close"], label="Close Price")
+    ax.plot(
+        df_plot["Date"],
+        df_plot["Close"],
+        label="Close Price",
+        linewidth=1.3,
+        alpha=0.9
+    )
+
     if not ledger.empty:
         buy_50 = ledger[ledger["Action"] == "BUY_50"]
         buy_100 = ledger[ledger["Action"] == "BUY_100"]
@@ -245,20 +256,78 @@ def _write_backtest_reports(equity_df: pd.DataFrame, ledger_path: str, reports_p
         forced = ledger[ledger["Action"] == "FORCED_SL_TP"]
 
         if not buy_50.empty:
-            ax.scatter(buy_50["Date"], buy_50["Price"], marker="^", s=70, label="BUY_50")
+            ax.scatter(
+                buy_50["Date"],
+                buy_50["Price"],
+                marker="^",
+                s=80,
+                color="lightskyblue",
+                edgecolors="black",
+                linewidths=0.4,
+                alpha=0.95,
+                label="BUY_50",
+                zorder=3,
+            )
+
         if not buy_100.empty:
-            ax.scatter(buy_100["Date"], buy_100["Price"], marker="^", s=120, label="BUY_100")
+            ax.scatter(
+                buy_100["Date"],
+                buy_100["Price"],
+                marker="^",
+                s=130,
+                color="blue",
+                edgecolors="black",
+                linewidths=0.45,
+                alpha=0.95,
+                label="BUY_100",
+                zorder=3,
+            )
+
         if not sell_50.empty:
-            ax.scatter(sell_50["Date"], sell_50["Price"], marker="v", s=70, label="SELL_50")
+            ax.scatter(
+                sell_50["Date"],
+                sell_50["Price"],
+                marker="v",
+                s=80,
+                color="lightcoral",
+                edgecolors="black",
+                linewidths=0.4,
+                alpha=0.95,
+                label="SELL_50",
+                zorder=3,
+            )
+
         if not sell_100.empty:
-            ax.scatter(sell_100["Date"], sell_100["Price"], marker="v", s=120, label="SELL_100")
+            ax.scatter(
+                sell_100["Date"],
+                sell_100["Price"],
+                marker="v",
+                s=130,
+                color="red",
+                edgecolors="black",
+                linewidths=0.45,
+                alpha=0.95,
+                label="SELL_100",
+                zorder=3,
+            )
+
         if not forced.empty:
-            ax.scatter(forced["Date"], forced["Price"], marker="x", s=65, label="FORCED_SL_TP")
+            ax.scatter(
+                forced["Date"],
+                forced["Price"],
+                marker="x",
+                s=70,
+                color="black",
+                linewidths=1.0,
+                alpha=0.9,
+                label="FORCED_SL_TP",
+                zorder=4,
+            )
 
     ax.set_title(f"Backtest Actions - {settings.EXPERIMENT_NAME}")
     ax.set_xlabel("Date")
     ax.set_ylabel("Price")
-    ax.grid(True)
+    ax.grid(True, alpha=0.3)
     ax.legend(loc="best")
     plt.tight_layout()
     actions_png = os.path.join(reports_paths["figures_dir"], "actions_overlay.png")
@@ -266,7 +335,27 @@ def _write_backtest_reports(equity_df: pd.DataFrame, ledger_path: str, reports_p
     plt.close()
     generated["actions_overlay_png"] = actions_png
 
-    # 2) Equity vs benchmark
+    # 2) Portfolio value over evaluation period
+    if "Portfolio_Value" in df_plot.columns and not df_plot["Portfolio_Value"].isna().all():
+        fig, ax = plt.subplots(figsize=(14, 5.5))
+        ax.plot(
+            df_plot["Date"],
+            df_plot["Portfolio_Value"],
+            linewidth=1.6,
+            label="Portfolio Value"
+        )
+        ax.set_title("Portfolio Value Over Evaluation Period")
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Portfolio Value")
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best")
+        plt.tight_layout()
+        portfolio_png = os.path.join(reports_paths["figures_dir"], "portfolio_value.png")
+        plt.savefig(portfolio_png, dpi=150)
+        plt.close()
+        generated["portfolio_value_png"] = portfolio_png
+
+    # 3) Equity vs benchmark
     initial_equity = float(df_plot["Portfolio_Value"].iloc[0])
     initial_price = float(df_plot["Close"].iloc[0])
     df_plot["Portfolio_Index"] = (df_plot["Portfolio_Value"] / (initial_equity + 1e-8)) * 100.0
@@ -274,7 +363,7 @@ def _write_backtest_reports(equity_df: pd.DataFrame, ledger_path: str, reports_p
 
     fig, ax = plt.subplots(figsize=(14, 7))
     ax.plot(df_plot["Date"], df_plot["Portfolio_Index"], label="Portfolio (Index=100)")
-    ax.plot(df_plot["Date"], df_plot["BuyHold_Index"], label="Buy & Hold TSLA (Index=100)")
+    ax.plot(df_plot["Date"], df_plot["BuyHold_Index"], label=f"Buy & Hold {settings.SYMBOL} (Index=100)")
     ax.set_title("Equity vs Buy-and-Hold")
     ax.set_xlabel("Date")
     ax.set_ylabel("Index")
@@ -286,7 +375,7 @@ def _write_backtest_reports(equity_df: pd.DataFrame, ledger_path: str, reports_p
     plt.close()
     generated["equity_vs_benchmark_png"] = equity_png
 
-    # 3) Drawdown
+    # 4) Drawdown
     running_max = df_plot["Portfolio_Value"].cummax()
     drawdown_pct = ((df_plot["Portfolio_Value"] - running_max) / (running_max + 1e-8)) * 100.0
     fig, ax = plt.subplots(figsize=(14, 4.5))
@@ -302,7 +391,7 @@ def _write_backtest_reports(equity_df: pd.DataFrame, ledger_path: str, reports_p
     plt.close()
     generated["drawdown_curve_png"] = drawdown_png
 
-    # 4) Trade return histogram
+    # 5) Trade return histogram
     if not ledger.empty:
         cycle_returns = _extract_cycle_returns(ledger)
         if cycle_returns:
@@ -482,36 +571,14 @@ def _write_test_signature():
 
 
 def _build_or_load_test_dataset():
-    """Load cached test features or build them from raw checkpoints."""
+    """Load cached test features or build them via the shared processor pipeline."""
     cached = _load_test_checkpoint_if_compatible()
     if cached is not None:
         return cached
 
-    # Rebuild test features from raw checkpoints using the same processor flow.
-    prices_df = load_raw_prices()
-    news_df = load_raw_news()
-    macro_df = load_raw_macro()
-    sentiment_df = build_news_sentiment(news_df, timeframe=settings.TIMEFRAME)
-    merged_df = merge_prices_news_macro(prices_df, sentiment_df, macro_df)
-    full_feature_df = add_technical_indicators(merged_df)
-
-    test_start = pd.to_datetime(settings.TEST_START_DATE)
-    test_end = pd.to_datetime(settings.TEST_END_DATE)
-    test_df = full_feature_df[
-        (full_feature_df["Date"] >= test_start) &
-        (full_feature_df["Date"] <= test_end)
-    ].copy().reset_index(drop=True)
-
-    if test_df.empty:
-        raise ValueError(
-            "❌ Test dataset is empty after processing and date filtering. "
-            "Check TEST_START_DATE/TEST_END_DATE and raw checkpoints."
-        )
-
-    os.makedirs(os.path.dirname(settings.TEST_FEATURES_CSV), exist_ok=True)
-    test_df.to_csv(settings.TEST_FEATURES_CSV, index=False)
+    test_df = build_test_dataset()
     _write_test_signature()
-    print(fnline(), f"✅ Test features checkpoint saved to {settings.TEST_FEATURES_CSV}")
+    print(f"✅ Test features checkpoint saved to {settings.TEST_FEATURES_CSV}")
     return test_df
 
 

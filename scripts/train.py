@@ -162,6 +162,7 @@ def run_training():
     # All PPO params come from settings — change them there, not here.
     # -------------------------------------------------------
     ppo_params = _resolve_ppo_params()
+    print(f"DEBUG PPO PARAMS USED: {ppo_params}")
     tb_log_dir = os.path.join(settings.ARTIFACT_DIR, "tb_logs")
     os.makedirs(tb_log_dir, exist_ok=True)
 

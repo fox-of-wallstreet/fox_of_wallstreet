@@ -19,7 +19,7 @@ os.makedirs(ARTIFACTS_BASE_DIR, exist_ok=True)
 # ==========================================
 # 1. ASSET & TIMEFRAME
 # ==========================================
-SYMBOL = "TSLA"
+SYMBOL = "NVDA"
 TIMEFRAME = "1h"   # Options: "1h", "1d"
 
 # ==========================================
@@ -28,7 +28,7 @@ TIMEFRAME = "1h"   # Options: "1h", "1d"
 ACTION_SPACE_TYPE = "discrete_5"   # Options: "discrete_3", "discrete_5"
 INITIAL_BALANCE = 10_000.0          # Start capital used for training normalization. Must match trained model.
 LIVE_TRADING_BUDGET = 10_000.0      # Max cash the live trader may allocate. Cap to trade only a slice of your Alpaca account.
-CASH_RISK_FRACTION = 0.65           # Position sizing per buy. Typical: 0.30 to 1.00. Lower = safer.
+CASH_RISK_FRACTION = 0.7           # Position sizing per buy. Typical: 0.30 to 1.00. Lower = safer.
 
 # ==========================================
 # 3. REWARD & RISK
@@ -36,8 +36,8 @@ CASH_RISK_FRACTION = 0.65           # Position sizing per buy. Typical: 0.30 to 
 REWARD_STRATEGY = "pure_pnl"               # "pure_pnl" (neutral) or "absolute_asymmetric" (losses penalized more).
 BANKRUPTCY_THRESHOLD_PCT = 0.50     # Episode stops at this drawdown floor. 0.50 = allow 50% capital loss.
 BANKRUPTCY_PENALTY = 10.0           # Extra negative reward on bankruptcy. Typical: 5 to 30.
-STOP_LOSS_PCT = 0.20                # Forced close when unrealized PnL <= -value. Typical: 0.05 to 0.30.
-TAKE_PROFIT_PCT = 0.30              # Forced close when unrealized PnL >= value. Use large value to effectively disable TP.
+STOP_LOSS_PCT = 0.15 #0.20                # Forced close when unrealized PnL <= -value. Typical: 0.05 to 0.30.
+TAKE_PROFIT_PCT = 0.25 #0.30              # Forced close when unrealized PnL >= value. Use large value to effectively disable TP.
 SLIPPAGE_PCT = 0.0005               # Execution friction. Typical intraday stress range: 0.0005 to 0.002.
 INVALID_ACTION_PENALTY = 0.08       # Penalty for impossible actions (e.g., sell with no shares). Typical: 0.01 to 0.10.
 MIN_INVESTMENT_FRACTION = 0.001     # Minimum meaningful buy as fraction of INITIAL_BALANCE ($10 on $10k). Buys below this get invalid-action penalty.
@@ -104,20 +104,27 @@ AVWAP_ATR_K_D       = 1.0  # Daily ATR significance multiplier
 # ==========================================
 # 7. TRAINING
 # ==========================================
-TOTAL_TIMESTEPS = 200_000  # Best observed for TSLA 1h discrete_5 (Mogens)
-LEARNING_RATE          = 0.000237   # Best known (run 0918, +8.16% OOS)
+TOTAL_TIMESTEPS        = 200_000  # Best observed for TSLA 1h discrete_5 (Mogens)
+LEARNING_RATE          = 0.0009   # Best known (run 0918, +8.16% OOS)
 LR_COSINE_MIN_FRACTION = 0.1        # Used only when cosine schedule is enabled in train.py
-ENT_COEF               = 0.000422  # Best known (run 0918, +8.16% OOS)
-BATCH_SIZE             = 64         # Best known (run 0918, +8.16% OOS) — SB3 default
-GAMMA                  = 0.99       # Best known (run 0918, +8.16% OOS) — SB3 default
-N_STACK         = 5
-RANDOM_SEED     = 42
+ENT_COEF               = 0.001  # Best known (run 0918, +8.16% OOS)
+BATCH_SIZE             = 128         # Best known (run 0918, +8.16% OOS) — SB3 default
+GAMMA                  = 0.94      # Best known (run 0918, +8.16% OOS) — SB3 default
+N_STACK                = 5
+RANDOM_SEED            = 42
 
 # ==========================================
 # 8. OPTUNA
 # ==========================================
-USE_OPTUNA_BEST_PARAMS = True
-OPTUNA_STUDY_NAME      = f"ppo_{SYMBOL.lower()}_{TIMEFRAME}"
+USE_OPTUNA_BEST_PARAMS = False
+#OPTUNA_STUDY_NAME      = f"ppo_{SYMBOL.lower()}_{TIMEFRAME}" # old previous version!
+OPTUNA_STUDY_NAME = (
+    f"ppo_{SYMBOL.lower()}_{TIMEFRAME}_{ACTION_SPACE_TYPE}"
+    f"_{REWARD_STRATEGY}"
+    f"_{'news' if USE_NEWS_FEATURES else 'nonews'}"
+    f"_{'macro' if USE_MACRO_FEATURES else 'nomacro'}"
+    f"_{'time' if USE_TIME_FEATURES else 'notime'}"
+)
 OPTUNA_DB_PATH         = os.path.join(BASE_DIR, "artifacts", "optuna_study.db")
 OPTUNA_TRIALS          = 20
 OPTUNA_EVAL_TIMESTEPS  = 75_000  # ~25% of TOTAL_TIMESTEPS — enough for meaningful trial differentiation

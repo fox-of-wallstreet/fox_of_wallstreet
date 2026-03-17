@@ -39,3 +39,5 @@ dotenv
 fastapi
 uvicorn[standard]
 
+tensorboard
+

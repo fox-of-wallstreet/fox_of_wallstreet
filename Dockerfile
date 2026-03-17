@@ -4,11 +4,14 @@ FROM python:3.12.9-slim
 # 2. Prevent Python from writing .pyc files and ensure logs are sent straight to terminal
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV PORT=8080
 
 # 3. Setup user early
 RUN useradd -m fastapiuser
 WORKDIR /app
-RUN mkdir -p /app/artifacts && chown fastapiuser:fastapiuser /app/artifacts
+RUN mkdir -p /app/artifacts && \
+	chown fastapiuser:fastapiuser /app/artifacts && \
+	chmod 777 /app/artifacts
 
 # 4. Install dependencies (using the cache mount from above)
 COPY requirements.txt .
@@ -24,4 +27,6 @@ USER fastapiuser
 # 6. Expose the port FastAPI usually runs on
 EXPOSE 8080
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+# The shell form allows the container to pick up the $PORT variable from GCP
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
+

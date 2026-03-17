@@ -174,10 +174,10 @@ def sample_ppo_params(trial: optuna.Trial) -> dict:
     Extend this function to search over more params (e.g. n_steps, clip_range).
     """
     return {
-        "learning_rate": trial.suggest_float("learning_rate", 1e-4, 1e-3, log=True),
-        "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256]),
-        "gamma": trial.suggest_float("gamma", 0.90, 0.97, log=False),
-        "ent_coef": trial.suggest_float("ent_coef", 0.0005, 0.01, log=True),
+        "learning_rate": trial.suggest_float("learning_rate", 2e-4, 8e-4, log=True),
+        "batch_size": trial.suggest_categorical("batch_size", [64, 128]),
+        "gamma": trial.suggest_float("gamma", 0.90, 0.95, log=False),
+        "ent_coef": trial.suggest_float("ent_coef", 0.001, 0.01, log=True),
     }
 
 

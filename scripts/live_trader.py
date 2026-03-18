@@ -885,11 +885,21 @@ if __name__ == "__main__":
     setup_artifact_symlinks()
     parser = argparse.ArgumentParser(description="Fox of Wallstreet — live PPO trader")
     parser.add_argument(
+        "--model",
+        action="extend",
+        nargs="+",
+        help="Add a pretrained model.",
+    )
+    parser.add_argument(
         "--bot",
         action="store_true",
         help="Run as a persistent bot with Telegram control and automatic candle scheduling.",
     )
     args = parser.parse_args()
+    if args.model:
+        print(fnline(), "Found model", args.model[0])
+        os.environ['ARTIFACT_RUN'] = args.model[0]
+
     if args.bot:
         run_live_trader_bot()
     else:

@@ -28,5 +28,6 @@ USER fastapiuser
 EXPOSE 8080
 
 # The shell form allows the container to pick up the $PORT variable from GCP
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
+# The PORT is handled in fastapibackend.py
+CMD ["python", "fastapibackend.py"]
 

@@ -338,6 +338,7 @@ def merge_prices_and_news(price_df, news_sentiment_df):
     news_sentiment_df = news_sentiment_df.dropna(subset=["Date"]).sort_values("Date").reset_index(drop=True)
 
     merged = pd.merge_asof(price_df, news_sentiment_df, on="Date", direction="backward")
+    pd.set_option('future.no_silent_downcasting', True)
     merged["Sentiment_Mean"]  = merged["Sentiment_Mean"].fillna(0.0)
     merged["News_Intensity"] = merged["News_Intensity"].fillna(0.0)
     return merged

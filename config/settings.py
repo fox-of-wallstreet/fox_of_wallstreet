@@ -19,16 +19,16 @@ os.makedirs(ARTIFACTS_BASE_DIR, exist_ok=True)
 # ==========================================
 # 1. ASSET & TIMEFRAME
 # ==========================================
-SYMBOL = "NVDA"
-TIMEFRAME = "1h"   # Options: "1h", "1d"
+SYMBOL = "AAPL"
+TIMEFRAME = "1d"   # Options: "1h", "1d"
 
 # ==========================================
-# 2. ACTION SPACE
+# 2. ACTION SPACh
 # ==========================================
 ACTION_SPACE_TYPE = "discrete_5"   # Options: "discrete_3", "discrete_5"
 INITIAL_BALANCE = 10_000.0          # Start capital used for training normalization. Must match trained model.
 LIVE_TRADING_BUDGET = 10_000.0      # Max cash the live trader may allocate. Cap to trade only a slice of your Alpaca account.
-CASH_RISK_FRACTION = 0.7           # Position sizing per buy. Typical: 0.30 to 1.00. Lower = safer.
+CASH_RISK_FRACTION = 0.65           # Position sizing per buy. Typical: 0.30 to 1.00. Lower = safer.
 
 # ==========================================
 # 3. REWARD & RISK
@@ -38,17 +38,18 @@ BANKRUPTCY_THRESHOLD_PCT = 0.50     # Episode stops at this drawdown floor. 0.50
 BANKRUPTCY_PENALTY = 10.0           # Extra negative reward on bankruptcy. Typical: 5 to 30.
 STOP_LOSS_PCT = 0.15 #0.20                # Forced close when unrealized PnL <= -value. Typical: 0.05 to 0.30.
 TAKE_PROFIT_PCT = 0.25 #0.30              # Forced close when unrealized PnL >= value. Use large value to effectively disable TP.
-SLIPPAGE_PCT = 0.0005               # Execution friction. Typical intraday stress range: 0.0005 to 0.002.
-INVALID_ACTION_PENALTY = 0.08       # Penalty for impossible actions (e.g., sell with no shares). Typical: 0.01 to 0.10.
+SLIPPAGE_PCT = 0.0015 #0.0005               # Execution friction. Typical intraday stress range: 0.0005 to 0.002.
+INVALID_ACTION_PENALTY = 0.10 #0.08 #0.10        # Penalty for impossible actions (e.g., sell with no shares). Typical: 0.01 to 0.10.
 MIN_INVESTMENT_FRACTION = 0.001     # Minimum meaningful buy as fraction of INITIAL_BALANCE ($10 on $10k). Buys below this get invalid-action penalty.
 MAX_BARS_NORMALIZATION = 100        # Normalizer for bars_in_trade feature. Typical: 50 to 300.
 
+ENV_VERBOSE = False # set to True if stop loos and take profit behavior should be printed during training/optimization
 # ==========================================
 # 4. DATES
 # ==========================================
-TRAIN_START_DATE = "2023-01-01"
-TRAIN_END_DATE = "2025-10-31"
-TEST_START_DATE = "2025-11-01"
+TRAIN_START_DATE = "2017-01-01" #"2023-01-01" # make training period longer when 1d, so that it is comparable with 1h variant!
+TRAIN_END_DATE = "2025-07-31" #"2025-10-31"
+TEST_START_DATE = "2025-08-01" #"2025-11-01"
 TEST_END_DATE = "2026-03-06"
 
 # ==========================================
@@ -104,14 +105,14 @@ AVWAP_ATR_K_D       = 1.0  # Daily ATR significance multiplier
 # ==========================================
 # 7. TRAINING
 # ==========================================
-TOTAL_TIMESTEPS        = 200_000  # Best observed for TSLA 1h discrete_5 (Mogens)
-LEARNING_RATE          = 0.0009   # Best known (run 0918, +8.16% OOS)
+TOTAL_TIMESTEPS        = 175_000  # Best observed for TSLA 1h discrete_5 (Mogens)
+LEARNING_RATE          = 0.00025   # Best known (run 0918, +8.16% OOS)
 LR_COSINE_MIN_FRACTION = 0.1        # Used only when cosine schedule is enabled in train.py
-ENT_COEF               = 0.001  # Best known (run 0918, +8.16% OOS)
-BATCH_SIZE             = 128         # Best known (run 0918, +8.16% OOS) — SB3 default
-GAMMA                  = 0.94      # Best known (run 0918, +8.16% OOS) — SB3 default
-N_STACK                = 5
-RANDOM_SEED            = 42
+ENT_COEF               = 0.00065 #0.0012 #0.0005  # Best known (run 0918, +8.16% OOS)
+BATCH_SIZE             = 64         # Best known (run 0918, +8.16% OOS) — SB3 default
+GAMMA                  = 0.97 #0.95      # Best known (run 0918, +8.16% OOS) — SB3 default
+N_STACK                = 10 #5     # set to 5 when 1h and 10 when 1d variant
+RANDOM_SEED            = 67
 
 # ==========================================
 # 8. OPTUNA
@@ -126,8 +127,8 @@ OPTUNA_STUDY_NAME = (
     f"_{'time' if USE_TIME_FEATURES else 'notime'}"
 )
 OPTUNA_DB_PATH         = os.path.join(BASE_DIR, "artifacts", "optuna_study.db")
-OPTUNA_TRIALS          = 20
-OPTUNA_EVAL_TIMESTEPS  = 75_000  # ~25% of TOTAL_TIMESTEPS — enough for meaningful trial differentiation
+OPTUNA_TRIALS          = 12
+OPTUNA_EVAL_TIMESTEPS  = 100_000  # ~25% of TOTAL_TIMESTEPS — enough for meaningful trial differentiation
 
 # ==========================================
 # 9. EXPERIMENT NAMING (Hybrid: readable + timestamp)

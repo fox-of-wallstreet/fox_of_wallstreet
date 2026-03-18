@@ -5,6 +5,7 @@ FROM python:3.12.9-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
+ENV PYTHONPATH=.
 
 # 3. Setup user early
 RUN useradd -m fastapiuser

@@ -10,6 +10,7 @@ This script:
 
 import json
 import os
+from pathlib import Path
 import sys
 import time
 from datetime import datetime, timezone, timedelta
@@ -28,13 +29,76 @@ from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import MarketOrderRequest
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append('.')
 
+from core.tools import fnline
 from config import settings
 from core.processor import build_news_sentiment, load_raw_news, merge_prices_news_macro, add_technical_indicators
 
+def setup_artifact_symlinks():
+    """
+    Synchronizes the 'artifacts' directory with directories found in 'preloaded'.
+    Expects both to be at the same level in the project root.
+    """
+    source_dir = Path("preloaded")
+    target_dir = Path("artifacts")
+
+    # 1. Ensure directories exist
+    if not source_dir.exists():
+        print(fnline(), f"[!] Warning: Source directory {source_dir} not found.")
+        return
+
+    if not target_dir.exists():
+        target_dir.mkdir(parents=True)
+        print(fnline(), f"[*] Created target directory: {target_dir}")
+
+    # 2. Iterate through 'preloaded'
+    for item in source_dir.iterdir():
+        if item.is_dir():
+            link_name = target_dir / item.name
+
+            # Use relative pathing for the symlink (more portable)
+            # This points from 'artifacts/dir' back to '../preloaded/dir'
+            relative_source = os.path.join("..", "preloaded", item.name)
+
+            if not link_name.exists():
+                try:
+                    os.symlink(relative_source, link_name)
+                    print(fnline(), f"[✓] Linked: artifacts/{item.name} -> {relative_source}")
+                except OSError as e:
+                    print(fnline(), f"[X] Failed to link {item.name}: {e}")
+            else:
+                print(fnline(), f"[-] {item.name} already exists in artifacts, skipping.")
 
 def _now_utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+def _build_live_feature_dataframe(runtime_cfg: dict) -> pd.DataFrame:
+    prices_df = _download_recent_prices(runtime_cfg["symbol"], runtime_cfg["timeframe"])
+
+    if runtime_cfg["use_news"]:
+        sentiment_df = _load_live_news(runtime_cfg)
+    else:
+        sentiment_df = pd.DataFrame(columns=["Date", "Sentiment_Mean", "News_Intensity"])
+
+    macro_df = _download_recent_macro(runtime_cfg)
+
+    prices_df = _normalize_merge_datetime(prices_df, "Date")
+    if not sentiment_df.empty:
+        sentiment_df = _normalize_merge_datetime(sentiment_df, "Date")
+    if not macro_df.empty:
+        macro_df = _normalize_merge_datetime(macro_df, "Date")
+
+    merged = merge_prices_news_macro(prices_df, sentiment_df, macro_df)
+    features_df = add_technical_indicators(
+        merged,
+        features_list=runtime_cfg["features_used"]
+    )
+
+    if features_df.empty:
+        raise ValueError("❌ Live features are empty after processing.")
+
+    return features_df
 
 
 def _normalize_merge_datetime(df: pd.DataFrame, col: str = "Date") -> pd.DataFrame:
@@ -51,7 +115,7 @@ def _send_telegram_alert(message: str) -> None:
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
     if not token or not chat_id:
-        print("⚠️ Telegram credentials missing; skipping alert.")
+        print(fnline(), "⚠️ Telegram credentials missing; skipping alert.")
         return
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -59,10 +123,10 @@ def _send_telegram_alert(message: str) -> None:
     try:
         requests.post(url, json=payload, timeout=10)
     except Exception as exc:
-        print(f"⚠️ Failed to send Telegram alert: {exc}")
+        print(fnline(), f"⚠️ Failed to send Telegram alert: {exc}")
 
 
-def _send_telegram_confirmation_request(message: str, state: "_BotState") -> bool:
+def _send_telegram_confirmation_request(message: str, state: "_BotState", runtime_cfg: dict) -> bool:
     """Send an inline-keyboard confirmation to Telegram and block until the owner
     taps ✅ Confirm or ❌ Reject, or the timeout elapses.
 
@@ -73,7 +137,7 @@ def _send_telegram_confirmation_request(message: str, state: "_BotState") -> boo
     timeout_seconds = int(os.getenv("CONFIRMATION_TIMEOUT_SECONDS", "300"))
 
     if not token or not chat_id:
-        print("⚠️ Telegram credentials missing; order will NOT execute in secure mode.")
+        print(fnline(), "⚠️ Telegram credentials missing; order will NOT execute in secure mode.")
         return False
 
     base_url = f"https://api.telegram.org/bot{token}"
@@ -91,13 +155,13 @@ def _send_telegram_confirmation_request(message: str, state: "_BotState") -> boo
             timeout=10,
         )
         if not resp.ok:
-            print(f"⚠️ Telegram confirmation send failed: {resp.text}")
+            print(fnline(), f"⚠️ Telegram confirmation send failed: {resp.text}")
             return False
     except Exception as exc:
-        print(f"⚠️ Telegram confirmation send error: {exc}")
+        print(fnline(), f"⚠️ Telegram confirmation send error: {exc}")
         return False
 
-    print(f"⏳ Awaiting Telegram confirmation (timeout: {timeout_seconds}s)...")
+    print(fnline(), f"⏳ Awaiting Telegram confirmation (timeout: {timeout_seconds}s)...")
     deadline = time.time() + timeout_seconds
 
     while time.time() < deadline:
@@ -113,18 +177,18 @@ def _send_telegram_confirmation_request(message: str, state: "_BotState") -> boo
             )
             for update in poll.json().get("result", []):
                 state.update_offset = update["update_id"] + 1
-                result = _process_telegram_update(update, state, base_url, chat_id)
+                result = _process_telegram_update(update, state, base_url, chat_id, runtime_cfg)
                 if result == "confirm":
-                    print("✅ Owner confirmed the order.")
+                    print(fnline(), "✅ Owner confirmed the order.")
                     return True
                 if result == "reject":
-                    print("❌ Owner rejected the order.")
+                    print(fnline(), "❌ Owner rejected the order.")
                     return False
         except Exception as exc:
-            print(f"⚠️ Telegram polling error: {exc}")
+            print(fnline(), f"⚠️ Telegram polling error: {exc}")
             time.sleep(2)
 
-    print("⏰ Confirmation timed out — order will NOT execute.")
+    print(fnline(), "⏰ Confirmation timed out — order will NOT execute.")
     _tg_send(base_url, chat_id, "⏰ Confirmation timed out. Order *NOT* executed.")
     return False
 
@@ -146,7 +210,7 @@ def _resolve_trained_artifact_paths():
             raise FileNotFoundError(f"❌ ARTIFACT_RUN='{artifact_run}' — model.zip not found at {model_zip}")
         if not os.path.exists(scaler_pkl):
             raise FileNotFoundError(f"❌ ARTIFACT_RUN='{artifact_run}' — scaler.pkl not found at {scaler_pkl}")
-        print(f"📌 Using pinned artifact run: {run_dir}")
+        print(fnline(), f"📌 Using pinned artifact run: {run_dir}")
         return (
             os.path.join(run_dir, "model"),
             scaler_pkl,
@@ -186,7 +250,7 @@ def _resolve_trained_artifact_paths():
         )
 
     latest_run_dir = sorted(candidates, key=lambda x: x[0], reverse=True)[0][1]
-    print(f"ℹ️ Using latest compatible artifact run: {latest_run_dir}")
+    print(fnline(), f"ℹ️ Using latest compatible artifact run: {latest_run_dir}")
     return (
         os.path.join(latest_run_dir, "model"),
         os.path.join(latest_run_dir, "scaler.pkl"),
@@ -194,45 +258,34 @@ def _resolve_trained_artifact_paths():
     )
 
 
-def _validate_live_compatibility(metadata_path: str) -> None:
+def _load_runtime_cfg(metadata_path: str) -> dict:
+    """
+    Load model-specific runtime config from the selected artifact metadata.
+    This becomes the source of truth for live trading.
+    """
     if not os.path.exists(metadata_path):
-        print(f"⚠️ Metadata not found at {metadata_path}; skipping compatibility validation.")
-        return
+        raise FileNotFoundError(f"❌ metadata.json not found: {metadata_path}")
 
     with open(metadata_path, "r") as f:
         metadata = json.load(f)
 
-    expected = {
-        "symbol": settings.SYMBOL,
-        "timeframe": settings.TIMEFRAME,
-        "action_space": settings.ACTION_SPACE_TYPE,
-        "reward_strategy": settings.REWARD_STRATEGY,
-        "n_stack": settings.N_STACK,
-        "features_used": settings.FEATURES_LIST,
-        "feature_count": settings.EXPECTED_MARKET_FEATURES,
-        "use_news": settings.USE_NEWS_FEATURES,
-        "use_macro": settings.USE_MACRO_FEATURES,
-        "use_time": settings.USE_TIME_FEATURES,
-        "cash_risk_fraction": settings.CASH_RISK_FRACTION,
+    runtime_cfg = {
+        "symbol": metadata["symbol"],
+        "timeframe": metadata["timeframe"],
+        "action_space": metadata["action_space"],
+        "reward_strategy": metadata.get("reward_strategy"),
+        "n_stack": metadata["n_stack"],
+        "features_used": metadata["features_used"],
+        "feature_count": metadata.get("feature_count", len(metadata["features_used"])),
+        "use_news": metadata.get("use_news", True),
+        "use_macro": metadata.get("use_macro", True),
+        "use_time": metadata.get("use_time", True),
+        "cash_risk_fraction": metadata.get("cash_risk_fraction", settings.CASH_RISK_FRACTION),
     }
 
-    mismatches = []
-    for key, current_value in expected.items():
-        trained_value = metadata.get(key)
-        if trained_value != current_value:
-            mismatches.append((key, trained_value, current_value))
-
-    if mismatches:
-        lines = [
-            "❌ Live compatibility check failed.",
-            "Current settings differ from resolved training metadata:",
-        ]
-        for key, trained, current in mismatches:
-            lines.append(f"  - {key}: trained={trained} | current={current}")
-        lines.append("Align config/settings.py with the trained run, or retrain.")
-        raise ValueError("\n".join(lines))
-
-    print("✅ Live compatibility check passed against training metadata.")
+    print(fnline(), f"✅ Loaded runtime config from metadata: {metadata_path}")
+    print(fnline(), f"   symbol={runtime_cfg['symbol']} | timeframe={runtime_cfg['timeframe']} | action_space={runtime_cfg['action_space']}")
+    return runtime_cfg
 
 
 def _download_recent_prices(symbol: str, timeframe: str) -> pd.DataFrame:
@@ -267,10 +320,11 @@ def _download_recent_prices(symbol: str, timeframe: str) -> pd.DataFrame:
     return df[required]
 
 
-def _download_recent_macro(timeframe: str) -> pd.DataFrame:
-    if not settings.USE_MACRO_FEATURES:
+def _download_recent_macro(runtime_cfg: dict) -> pd.DataFrame:
+    if not runtime_cfg["use_macro"]:
         return pd.DataFrame(columns=["Date"])
 
+    timeframe = runtime_cfg["timeframe"]
     period = "120d" if timeframe == "1h" else "5y"
     merged = None
 
@@ -303,34 +357,81 @@ def _download_recent_macro(timeframe: str) -> pd.DataFrame:
     merged[cols] = merged[cols].ffill().bfill()
     return merged
 
+def _get_live_news_cutoff(runtime_cfg: dict) -> pd.Timestamp:
+    now = pd.Timestamp.now(tz="America/New_York")
+    if runtime_cfg["timeframe"] == "1d":
+        return now - pd.Timedelta(days=30)
+    return now - pd.Timedelta(days=10)
 
-def _build_live_feature_dataframe() -> pd.DataFrame:
-    prices_df = _download_recent_prices(settings.SYMBOL, settings.TIMEFRAME)
 
-    if settings.USE_NEWS_FEATURES:
-        news_df = load_raw_news()
-        sentiment_df = build_news_sentiment(news_df, timeframe=settings.TIMEFRAME)
+def _load_live_news(runtime_cfg: dict) -> pd.DataFrame:
+    project_root = Path(settings.ARTIFACTS_BASE_DIR).resolve().parent
+
+    sentiment_path = project_root / "data" / "processed" / "news_sentiment.csv"
+    cutoff = _get_live_news_cutoff(runtime_cfg)
+    cutoff_naive = cutoff.tz_localize(None)
+
+    if sentiment_path.exists():
+        news_df = pd.read_csv(sentiment_path)
+
+        if "created_at_ny" in news_df.columns:
+            news_df["created_at_ny"] = pd.to_datetime(news_df["created_at_ny"], errors="coerce")
+            if news_df["created_at_ny"].dt.tz is None:
+                news_df["created_at_ny"] = news_df["created_at_ny"].dt.tz_localize("America/New_York")
+            else:
+                news_df["created_at_ny"] = news_df["created_at_ny"].dt.tz_convert("America/New_York")
+
+            news_df = news_df[news_df["created_at_ny"] >= cutoff].copy()
+
+            if {"Date", "Sentiment_Mean", "News_Intensity"}.issubset(news_df.columns):
+                return news_df[["Date", "Sentiment_Mean", "News_Intensity"]].copy()
+
+            if "Raw_Sentiment" in news_df.columns:
+                news_df["Date"] = news_df["created_at_ny"].dt.tz_localize(None).dt.normalize()
+                return (
+                    news_df.groupby("Date", as_index=False)
+                    .agg(
+                        Sentiment_Mean=("Raw_Sentiment", "mean"),
+                        News_Intensity=("Raw_Sentiment", "size"),
+                    )
+                )
+
+        if {"Date", "Sentiment_Mean", "News_Intensity"}.issubset(news_df.columns):
+            news_df["Date"] = pd.to_datetime(news_df["Date"], errors="coerce")
+            news_df = news_df.dropna(subset=["Date"]).copy()
+            news_df = news_df[news_df["Date"] >= cutoff_naive].copy()
+            return news_df[["Date", "Sentiment_Mean", "News_Intensity"]].copy()
+
+        raise ValueError(
+            "❌ news_sentiment.csv must contain either "
+            "'created_at_ny' or ['Date', 'Sentiment_Mean', 'News_Intensity']."
+        )
+
+    # fallback: raw news loader
+    news_df = load_raw_news()
+
+    if "created_at_ny" in news_df.columns:
+        news_df["created_at_ny"] = pd.to_datetime(news_df["created_at_ny"], errors="coerce")
+        if news_df["created_at_ny"].dt.tz is None:
+            news_df["created_at_ny"] = news_df["created_at_ny"].dt.tz_localize("America/New_York")
+        else:
+            news_df["created_at_ny"] = news_df["created_at_ny"].dt.tz_convert("America/New_York")
+    elif "created_at" in news_df.columns:
+        news_df["created_at_ny"] = pd.to_datetime(
+            news_df["created_at"], utc=True, errors="coerce"
+        ).dt.tz_convert("America/New_York")
     else:
-        sentiment_df = pd.DataFrame(columns=["Date", "Sentiment_Mean", "News_Intensity"])
+        raise ValueError("❌ News data has neither 'created_at_ny' nor 'created_at'.")
 
-    macro_df = _download_recent_macro(settings.TIMEFRAME)
+    news_df = news_df[news_df["created_at_ny"] >= cutoff].copy()
 
-    # Ensure exact datetime dtype match for merge_asof across all live inputs.
-    prices_df = _normalize_merge_datetime(prices_df, "Date")
-    if not sentiment_df.empty:
-        sentiment_df = _normalize_merge_datetime(sentiment_df, "Date")
-    if not macro_df.empty:
-        macro_df = _normalize_merge_datetime(macro_df, "Date")
+    if news_df.empty:
+        return pd.DataFrame(columns=["Date", "Sentiment_Mean", "News_Intensity"])
 
-    merged = merge_prices_news_macro(prices_df, sentiment_df, macro_df)
-    features_df = add_technical_indicators(merged)
-    if features_df.empty:
-        raise ValueError("❌ Live features are empty after processing.")
-
-    return features_df
+    return build_news_sentiment(news_df, timeframe=runtime_cfg["timeframe"])
 
 
-def _get_current_position_features(trading_client: TradingClient, latest_price: float):
+def _get_current_position_features(trading_client: TradingClient, latest_price: float, runtime_cfg: dict):
     """Return portfolio features matching TradingEnv.NUM_PORTFOLIO_FEATURES (5):
     [cash_ratio, position_size, inventory_fraction, unrealized_pnl, last_action_norm]
 
@@ -342,7 +443,7 @@ def _get_current_position_features(trading_client: TradingClient, latest_price: 
     cash = min(raw_cash, settings.LIVE_TRADING_BUDGET)
 
     try:
-        position = trading_client.get_open_position(settings.SYMBOL)
+        position = trading_client.get_open_position(runtime_cfg["symbol"])
         current_shares = float(position.qty)
         entry_price = float(position.avg_entry_price)
         in_position = True
@@ -361,7 +462,7 @@ def _get_current_position_features(trading_client: TradingClient, latest_price: 
         (latest_price - entry_price) / (entry_price + 1e-8)
         if in_position else 0.0
     )
-    max_action = 4 if settings.ACTION_SPACE_TYPE == "discrete_5" else 2
+    max_action = 4 if runtime_cfg["action_space"] == "discrete_5" else 2
     last_action_norm = 0.0 / max_action  # no prior action known in live context
 
     portfolio_features = np.array(
@@ -371,8 +472,8 @@ def _get_current_position_features(trading_client: TradingClient, latest_price: 
     return current_shares, cash, entry_price, portfolio_features
 
 
-def _build_live_observation(scaled_market_features: pd.DataFrame, portfolio_features: np.ndarray) -> np.ndarray:
-    n_stack = settings.N_STACK
+def _build_live_observation(scaled_market_features: pd.DataFrame, portfolio_features: np.ndarray, runtime_cfg: dict) -> np.ndarray:
+    n_stack = runtime_cfg["n_stack"]
     market = scaled_market_features.values
     if len(market) < n_stack:
         raise ValueError(
@@ -387,13 +488,13 @@ def _build_live_observation(scaled_market_features: pd.DataFrame, portfolio_feat
     return obs
 
 
-def _action_to_text(action: int) -> str:
-    if settings.ACTION_SPACE_TYPE == "discrete_3":
+def _action_to_text(action: int, runtime_cfg: dict) -> str:
+    if runtime_cfg["action_space"] == "discrete_3":
         mapping = {0: "SELL_ALL", 1: "BUY_ALL", 2: "HOLD"}
-    elif settings.ACTION_SPACE_TYPE == "discrete_5":
+    elif runtime_cfg["action_space"] == "discrete_5":
         mapping = {0: "SELL_100", 1: "SELL_50", 2: "HOLD", 3: "BUY_50", 4: "BUY_100"}
     else:
-        raise ValueError(f"Unsupported ACTION_SPACE_TYPE: {settings.ACTION_SPACE_TYPE}")
+        raise ValueError(f"Unsupported ACTION_SPACE_TYPE: {runtime_cfg['action_space']}")
     return mapping.get(int(action), "UNKNOWN")
 
 
@@ -429,7 +530,7 @@ class _BotState:
             with open(self._STATE_FILE, "w") as f:
                 json.dump({"mode": self.mode}, f)
         except Exception as exc:
-            print(f"⚠️ Could not save trader state: {exc}")
+            print(fnline(), f"⚠️ Could not save trader state: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -443,14 +544,14 @@ def _tg_send(base_url: str, chat_id: str, text: str, reply_markup=None) -> None:
     try:
         requests.post(f"{base_url}/sendMessage", json=payload, timeout=10)
     except Exception as exc:
-        print(f"⚠️ Telegram send error: {exc}")
+        print(fnline(), f"⚠️ Telegram send error: {exc}")
 
 
-def _tg_send_status(state: _BotState, base_url: str, chat_id: str, trading_client=None) -> None:
+def _tg_send_status(state: _BotState, base_url: str, chat_id: str, runtime_cfg: dict, trading_client=None) -> None:
     lines = [
         "📊 *BOT STATUS*",
         f"Mode: *{state.mode.upper()}*",
-        f"Symbol: `{settings.SYMBOL}` | `{settings.TIMEFRAME}`",
+        f"Symbol: `{runtime_cfg['symbol']}` | `{runtime_cfg['timeframe']}`",
         f"Budget: ${settings.LIVE_TRADING_BUDGET:,.0f}",
     ]
     if trading_client is not None:
@@ -458,7 +559,7 @@ def _tg_send_status(state: _BotState, base_url: str, chat_id: str, trading_clien
             account = trading_client.get_account()
             lines.append(f"Account cash: ${float(account.cash):,.2f}")
             try:
-                pos = trading_client.get_open_position(settings.SYMBOL)
+                pos = trading_client.get_open_position(runtime_cfg["symbol"])
                 lines.append(f"Position: {pos.qty} shares @ ${float(pos.avg_entry_price):.2f}")
                 if pos.unrealized_plpc is not None:
                     lines.append(f"Unrealized P&L: {float(pos.unrealized_plpc)*100:.2f}%")
@@ -474,6 +575,7 @@ def _process_telegram_update(
     state: _BotState,
     base_url: str,
     chat_id: str,
+    runtime_cfg: dict,
     trading_client=None,
 ) -> str | None:
     """Process one Telegram update.
@@ -512,7 +614,7 @@ def _process_telegram_update(
             _tg_send(base_url, chat_id, "Usage: `/mode autopilot|secure|simulate`")
 
     elif text == "/status":
-        _tg_send_status(state, base_url, chat_id, trading_client)
+        _tg_send_status(state, base_url, chat_id, runtime_cfg, trading_client)
 
     elif text == "/stop":
         state.stop_requested = True
@@ -533,7 +635,7 @@ def _process_telegram_update(
     return None
 
 
-def _poll_telegram_commands_once(state: _BotState, trading_client=None) -> None:
+def _poll_telegram_commands_once(state: _BotState, runtime_cfg: dict, trading_client=None) -> None:
     """Do one 10-second long-poll for Telegram commands between agent cycles."""
     token = os.getenv("TELEGRAM_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
@@ -549,9 +651,9 @@ def _poll_telegram_commands_once(state: _BotState, trading_client=None) -> None:
         )
         for update in resp.json().get("result", []):
             state.update_offset = update["update_id"] + 1
-            _process_telegram_update(update, state, base_url, chat_id, trading_client)
+            _process_telegram_update(update, state, base_url, chat_id, runtime_cfg, trading_client)
     except Exception as exc:
-        print(f"⚠️ Telegram poll error: {exc}")
+        print(fnline(), f"⚠️ Telegram poll error: {exc}")
         time.sleep(5)
 
 
@@ -569,18 +671,18 @@ def _next_candle_time(timeframe: str) -> datetime:
         raise ValueError(f"No candle schedule defined for TIMEFRAME='{timeframe}'")
 
 
-def _submit_action(trading_client: TradingClient, action: int, current_cash: float, current_shares: float, execute: bool = False) -> str:
+def _submit_action(trading_client: TradingClient, action: int, current_cash: float, current_shares: float, runtime_cfg: dict, execute: bool = False) -> str:
     min_notional = 10.0
 
     execute_orders = execute
 
-    if settings.ACTION_SPACE_TYPE == "discrete_3":
+    if runtime_cfg["action_space"] == "discrete_3":
         if action == 1:
-            notional = current_cash * settings.CASH_RISK_FRACTION
+            notional = current_cash * runtime_cfg["cash_risk_fraction"]
             if notional > min_notional:
                 if execute_orders:
                     order = MarketOrderRequest(
-                        symbol=settings.SYMBOL,
+                        symbol=runtime_cfg["symbol"],
                         notional=notional,
                         side=OrderSide.BUY,
                         time_in_force=TimeInForce.DAY,
@@ -594,7 +696,7 @@ def _submit_action(trading_client: TradingClient, action: int, current_cash: flo
             if current_shares > 0:
                 if execute_orders:
                     order = MarketOrderRequest(
-                        symbol=settings.SYMBOL,
+                        symbol=runtime_cfg["symbol"],
                         qty=current_shares,
                         side=OrderSide.SELL,
                         time_in_force=TimeInForce.DAY,
@@ -608,11 +710,11 @@ def _submit_action(trading_client: TradingClient, action: int, current_cash: flo
 
     # discrete_5
     if action == 4:
-        notional = current_cash * settings.CASH_RISK_FRACTION
+        notional = current_cash * runtime_cfg["cash_risk_fraction"]
         if notional > min_notional:
             if execute_orders:
                 order = MarketOrderRequest(
-                    symbol=settings.SYMBOL,
+                    symbol=runtime_cfg["symbol"],
                     notional=notional,
                     side=OrderSide.BUY,
                     time_in_force=TimeInForce.DAY,
@@ -623,11 +725,11 @@ def _submit_action(trading_client: TradingClient, action: int, current_cash: flo
         return "BUY_100 skipped (insufficient cash)"
 
     if action == 3:
-        notional = current_cash * 0.5 * settings.CASH_RISK_FRACTION
+        notional = current_cash * 0.5 * runtime_cfg["cash_risk_fraction"]
         if notional > min_notional:
             if execute_orders:
                 order = MarketOrderRequest(
-                    symbol=settings.SYMBOL,
+                    symbol=runtime_cfg["symbol"],
                     notional=notional,
                     side=OrderSide.BUY,
                     time_in_force=TimeInForce.DAY,
@@ -641,7 +743,7 @@ def _submit_action(trading_client: TradingClient, action: int, current_cash: flo
         if current_shares > 0:
             if execute_orders:
                 order = MarketOrderRequest(
-                    symbol=settings.SYMBOL,
+                    symbol=runtime_cfg["symbol"],
                     qty=current_shares,
                     side=OrderSide.SELL,
                     time_in_force=TimeInForce.DAY,
@@ -656,7 +758,7 @@ def _submit_action(trading_client: TradingClient, action: int, current_cash: flo
         if qty > 0:
             if execute_orders:
                 order = MarketOrderRequest(
-                    symbol=settings.SYMBOL,
+                    symbol=runtime_cfg["symbol"],
                     qty=qty,
                     side=OrderSide.SELL,
                     time_in_force=TimeInForce.DAY,
@@ -674,26 +776,29 @@ def _run_one_agent_cycle(
     model: PPO,
     scaler,
     state: _BotState,
+    runtime_cfg: dict,
 ) -> None:
     """Build features, predict, confirm if needed, execute, notify."""
-    feature_df = _build_live_feature_dataframe()
-    missing = [c for c in settings.FEATURES_LIST if c not in feature_df.columns]
+    feature_df = _build_live_feature_dataframe(runtime_cfg)
+    missing = [c for c in runtime_cfg["features_used"] if c not in feature_df.columns]
     if missing:
         raise ValueError(f"❌ Missing live feature columns: {missing}")
 
-    market_scaled = scaler.transform(feature_df[settings.FEATURES_LIST])
-    scaled_df = pd.DataFrame(market_scaled, columns=settings.FEATURES_LIST, index=feature_df.index)
+    market_scaled = scaler.transform(feature_df[runtime_cfg["features_used"]])
+    scaled_df = pd.DataFrame(market_scaled, columns=runtime_cfg["features_used"], index=feature_df.index)
 
     latest_price = float(feature_df.iloc[-1]["Close"])
-    current_shares, current_cash, entry_price, portfolio_features = _get_current_position_features(trading_client, latest_price)
-    obs = _build_live_observation(scaled_df, portfolio_features)
+    current_shares, current_cash, entry_price, portfolio_features = _get_current_position_features(
+        trading_client, latest_price, runtime_cfg
+    )
+    obs = _build_live_observation(scaled_df, portfolio_features, runtime_cfg)
 
     action, _ = model.predict(obs, deterministic=True)
     action = int(action[0]) if isinstance(action, np.ndarray) else int(action)
-    action_text = _action_to_text(action)
+    action_text = _action_to_text(action, runtime_cfg)
 
-    print(f"📊 Price: ${latest_price:.2f} | Action: {action} -> {action_text}")
-    print(f"💵 Budget cash: ${current_cash:.2f} | Shares: {current_shares:.6f}")
+    print(fnline(), f"📊 Price: ${latest_price:.2f} | Action: {action} -> {action_text}")
+    print(fnline(), f"💵 Budget cash: ${current_cash:.2f} | Shares: {current_shares:.6f}")
 
     action_is_trade = action_text != "HOLD"
 
@@ -701,7 +806,7 @@ def _run_one_agent_cycle(
         confirm_msg = (
             f"*⚠️ TRADE CONFIRMATION REQUIRED*\n"
             f"Time: {_now_utc_iso()}\n"
-            f"Symbol: {settings.SYMBOL} | {settings.TIMEFRAME}\n"
+            f"Symbol: {runtime_cfg['symbol']} | {runtime_cfg['timeframe']}\n"
             f"Action: *{action_text}*\n"
             f"Price: ${latest_price:.2f}\n"
             f"Budget cash: ${current_cash:.2f}\n"
@@ -709,18 +814,18 @@ def _run_one_agent_cycle(
             f"Entry price: ${entry_price:.2f}\n\n"
             f"Approve this order?"
         )
-        execute = _send_telegram_confirmation_request(confirm_msg, state)
+        execute = _send_telegram_confirmation_request(confirm_msg, state, runtime_cfg)
     else:
         execute = state.mode == "autopilot"
 
-    execution_result = _submit_action(trading_client, action, current_cash, current_shares, execute=execute)
-    print(f"✅ Execution result: {execution_result}")
+    execution_result = _submit_action(trading_client, action, current_cash, current_shares, runtime_cfg, execute=execute)
+    print(fnline(), f"✅ Execution result: {execution_result}")
 
     mode_label = {"autopilot": "AUTOPILOT", "secure": "SECURE"}.get(state.mode, "SIMULATE")
     _send_telegram_alert(
         f"*{mode_label} PPO SIGNAL*\n"
         f"Time: {_now_utc_iso()}\n"
-        f"Symbol: {settings.SYMBOL} | {settings.TIMEFRAME}\n"
+        f"Symbol: {runtime_cfg['symbol']} | {runtime_cfg['timeframe']}\n"
         f"Action: {action_text}\n"
         f"Price: ${latest_price:.2f}\n"
         f"Budget cash: ${current_cash:.2f}\n"
@@ -736,9 +841,12 @@ def run_live_trader() -> None:
     """
     load_dotenv()
     state = _BotState()
-    print(f"🟢 STARTING LIVE TRADER | {settings.SYMBOL} ({settings.TIMEFRAME})")
-    print(f"🔧 Trader mode: {state.mode.upper()}")
-    print(f"💰 Trading budget: ${settings.LIVE_TRADING_BUDGET:,.0f}")
+    model_base_path, scaler_path, metadata_path = _resolve_trained_artifact_paths()
+    runtime_cfg = _load_runtime_cfg(metadata_path)
+
+    print(fnline(), f"🟢 STARTING LIVE TRADER | {runtime_cfg['symbol']} ({runtime_cfg['timeframe']})")
+    print(fnline(), f"🔧 Trader mode: {state.mode.upper()}")
+    print(fnline(), f"💰 Trading budget: ${settings.LIVE_TRADING_BUDGET:,.0f}")
 
     alpaca_key = os.getenv("ALPACA_API_KEY")
     alpaca_secret = os.getenv("ALPACA_SECRET_KEY")
@@ -760,15 +868,11 @@ def run_live_trader() -> None:
         except Exception:
             pass
 
-    model_base_path, scaler_path, metadata_path = _resolve_trained_artifact_paths()
-    _validate_live_compatibility(metadata_path)
-
     scaler = joblib.load(scaler_path)
-    print(f"🧠 Loading model from {model_base_path}.zip")
+    print(fnline(), f"🧠 Loading model from {model_base_path}.zip")
     model = PPO.load(model_base_path)
 
-    _run_one_agent_cycle(trading_client, model, scaler, state)
-
+    _run_one_agent_cycle(trading_client, model, scaler, state, runtime_cfg)
 
 def run_live_trader_bot() -> None:
     """Persistent bot: schedules agent cycles at each candle close and handles
@@ -784,10 +888,12 @@ def run_live_trader_bot() -> None:
     """
     load_dotenv()
     state = _BotState()
+    model_base_path, scaler_path, metadata_path = _resolve_trained_artifact_paths()
+    runtime_cfg = _load_runtime_cfg(metadata_path)
 
-    print(f"🤖 STARTING LIVE TRADER BOT | {settings.SYMBOL} ({settings.TIMEFRAME})")
-    print(f"🔧 Initial mode: {state.mode.upper()}")
-    print(f"💰 Trading budget: ${settings.LIVE_TRADING_BUDGET:,.0f}")
+    print(fnline(), f"🤖 STARTING LIVE TRADER BOT | {runtime_cfg['symbol']} ({runtime_cfg['timeframe']})")
+    print(fnline(), f"🔧 Initial mode: {state.mode.upper()}")
+    print(fnline(), f"💰 Trading budget: ${settings.LIVE_TRADING_BUDGET:,.0f}")
 
     alpaca_key = os.getenv("ALPACA_API_KEY")
     alpaca_secret = os.getenv("ALPACA_SECRET_KEY")
@@ -796,10 +902,8 @@ def run_live_trader_bot() -> None:
     paper_flag = os.getenv("ALPACA_PAPER", "true").strip().lower() != "false"
     trading_client = TradingClient(alpaca_key, alpaca_secret, paper=paper_flag)
 
-    model_base_path, scaler_path, metadata_path = _resolve_trained_artifact_paths()
-    _validate_live_compatibility(metadata_path)
     scaler = joblib.load(scaler_path)
-    print(f"🧠 Loading model from {model_base_path}.zip")
+    print(fnline(), f"🧠 Loading model from {model_base_path}.zip")
     model = PPO.load(model_base_path)
 
     token = os.getenv("TELEGRAM_TOKEN")
@@ -811,48 +915,59 @@ def run_live_trader_bot() -> None:
             prev = drain.json().get("result", [])
             state.update_offset = (prev[-1]["update_id"] + 1) if prev else 0
         except Exception as exc:
-            print(f"⚠️ Telegram drain failed: {exc}")
+            print(fnline(), f"⚠️ Telegram drain failed: {exc}")
         _tg_send(
             base_url, chat_id,
             f"🤖 *LIVE TRADER BOT STARTED*\n"
-            f"Symbol: `{settings.SYMBOL}` | `{settings.TIMEFRAME}`\n"
+            f"Symbol: `{runtime_cfg['symbol']}` | `{runtime_cfg['timeframe']}`\n"
             f"Mode: *{state.mode.upper()}*\n"
             f"Budget: ${settings.LIVE_TRADING_BUDGET:,.0f}\n"
             f"Send /help for available commands.",
         )
     else:
-        print("⚠️ TELEGRAM_TOKEN/TELEGRAM_CHAT_ID not set — Telegram disabled.")
+        print(fnline(), "⚠️ TELEGRAM_TOKEN/TELEGRAM_CHAT_ID not set — Telegram disabled.")
 
     while not state.stop_requested:
-        next_run = _next_candle_time(settings.TIMEFRAME)
-        print(f"⏰ Next agent cycle at: {next_run.isoformat()}")
+        next_run = _next_candle_time(runtime_cfg["timeframe"])
+        print(fnline(), f"⏰ Next agent cycle at: {next_run.isoformat()}")
 
         while datetime.now(timezone.utc) < next_run and not state.stop_requested:
-            _poll_telegram_commands_once(state, trading_client)
+            _poll_telegram_commands_once(state, runtime_cfg, trading_client)
 
         if state.stop_requested:
             break
 
-        print(f"🔔 Running agent cycle | {_now_utc_iso()} | mode={state.mode.upper()}")
+        print(fnline(), f"🔔 Running agent cycle | {_now_utc_iso()} | mode={state.mode.upper()}")
         try:
-            _run_one_agent_cycle(trading_client, model, scaler, state)
+            _run_one_agent_cycle(trading_client, model, scaler, state, runtime_cfg)
         except Exception as exc:
             errmsg = f"❌ Agent cycle error: {exc}"
             print(errmsg)
             _send_telegram_alert(errmsg)
 
     _send_telegram_alert(f"🛑 Live trader bot stopped at {_now_utc_iso()}.")
-    print("🛑 Bot stopped.")
+    print(fnline(), "🛑 Bot stopped.")
 
 
 if __name__ == "__main__":
+    setup_artifact_symlinks()
     parser = argparse.ArgumentParser(description="Fox of Wallstreet — live PPO trader")
+    parser.add_argument(
+        "--model",
+        action="extend",
+        nargs="+",
+        help="Add a pretrained model.",
+    )
     parser.add_argument(
         "--bot",
         action="store_true",
         help="Run as a persistent bot with Telegram control and automatic candle scheduling.",
     )
     args = parser.parse_args()
+    if args.model:
+        print(fnline(), "Found model", args.model[0])
+        os.environ['ARTIFACT_RUN'] = args.model[0]
+
     if args.bot:
         run_live_trader_bot()
     else:

@@ -1,0 +1,34 @@
+{
+  "artifact_dir": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_NVDA_1d_discrete_5_news_macro_time_20260318_1015",
+  "tb_log_dir": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_NVDA_1d_discrete_5_news_macro_time_20260318_1015/tb_logs",
+  "event_files_found": [
+    "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_NVDA_1d_discrete_5_news_macro_time_20260318_1015/tb_logs/ppo_1/events.out.tfevents.1773825351.cachyos-x8664.27179.0"
+  ],
+  "metrics_found": [
+    "approx_kl",
+    "clip_fraction",
+    "entropy_loss",
+    "episode_length_mean",
+    "episode_reward_mean",
+    "explained_variance",
+    "policy_gradient_loss",
+    "total_loss",
+    "value_loss"
+  ],
+  "available_tensorboard_tags": [
+    "rollout/ep_len_mean",
+    "rollout/ep_rew_mean",
+    "time/fps",
+    "train/approx_kl",
+    "train/clip_fraction",
+    "train/clip_range",
+    "train/entropy_loss",
+    "train/explained_variance",
+    "train/learning_rate",
+    "train/loss",
+    "train/policy_gradient_loss",
+    "train/value_loss"
+  ],
+  "plots_dir": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_NVDA_1d_discrete_5_news_macro_time_20260318_1015/training_diagnostics/plots",
+  "csv_dir": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_NVDA_1d_discrete_5_news_macro_time_20260318_1015/training_diagnostics/csv"
+}

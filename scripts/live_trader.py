@@ -10,6 +10,7 @@ This script:
 
 import json
 import os
+from pathlib import Path
 import sys
 import time
 from datetime import datetime, timezone, timedelta
@@ -28,10 +29,46 @@ from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import MarketOrderRequest
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append('.')
 
+from core.tools import fnline
 from config import settings
 from core.processor import build_news_sentiment, load_raw_news, merge_prices_news_macro, add_technical_indicators
 
+def setup_artifact_symlinks():
+    """
+    Synchronizes the 'artifacts' directory with directories found in 'preloaded'.
+    Expects both to be at the same level in the project root.
+    """
+    source_dir = Path("preloaded")
+    target_dir = Path("artifacts")
+
+    # 1. Ensure directories exist
+    if not source_dir.exists():
+        print(fnline(), f"[!] Warning: Source directory {source_dir} not found.")
+        return
+
+    if not target_dir.exists():
+        target_dir.mkdir(parents=True)
+        print(fnline(), f"[*] Created target directory: {target_dir}")
+
+    # 2. Iterate through 'preloaded'
+    for item in source_dir.iterdir():
+        if item.is_dir():
+            link_name = target_dir / item.name
+            
+            # Use relative pathing for the symlink (more portable)
+            # This points from 'artifacts/dir' back to '../preloaded/dir'
+            relative_source = os.path.join("..", "preloaded", item.name)
+
+            if not link_name.exists():
+                try:
+                    os.symlink(relative_source, link_name)
+                    print(fnline(), f"[✓] Linked: artifacts/{item.name} -> {relative_source}")
+                except OSError as e:
+                    print(fnline(), f"[X] Failed to link {item.name}: {e}")
+            else:
+                print(fnline(), f"[-] {item.name} already exists in artifacts, skipping.")
 
 def _now_utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -51,7 +88,7 @@ def _send_telegram_alert(message: str) -> None:
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
     if not token or not chat_id:
-        print("⚠️ Telegram credentials missing; skipping alert.")
+        print(fnline(), "⚠️ Telegram credentials missing; skipping alert.")
         return
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -59,7 +96,7 @@ def _send_telegram_alert(message: str) -> None:
     try:
         requests.post(url, json=payload, timeout=10)
     except Exception as exc:
-        print(f"⚠️ Failed to send Telegram alert: {exc}")
+        print(fnline(), f"⚠️ Failed to send Telegram alert: {exc}")
 
 
 def _send_telegram_confirmation_request(message: str, state: "_BotState") -> bool:
@@ -73,7 +110,7 @@ def _send_telegram_confirmation_request(message: str, state: "_BotState") -> boo
     timeout_seconds = int(os.getenv("CONFIRMATION_TIMEOUT_SECONDS", "300"))
 
     if not token or not chat_id:
-        print("⚠️ Telegram credentials missing; order will NOT execute in secure mode.")
+        print(fnline(), "⚠️ Telegram credentials missing; order will NOT execute in secure mode.")
         return False
 
     base_url = f"https://api.telegram.org/bot{token}"
@@ -91,13 +128,13 @@ def _send_telegram_confirmation_request(message: str, state: "_BotState") -> boo
             timeout=10,
         )
         if not resp.ok:
-            print(f"⚠️ Telegram confirmation send failed: {resp.text}")
+            print(fnline(), f"⚠️ Telegram confirmation send failed: {resp.text}")
             return False
     except Exception as exc:
-        print(f"⚠️ Telegram confirmation send error: {exc}")
+        print(fnline(), f"⚠️ Telegram confirmation send error: {exc}")
         return False
 
-    print(f"⏳ Awaiting Telegram confirmation (timeout: {timeout_seconds}s)...")
+    print(fnline(), f"⏳ Awaiting Telegram confirmation (timeout: {timeout_seconds}s)...")
     deadline = time.time() + timeout_seconds
 
     while time.time() < deadline:
@@ -115,16 +152,16 @@ def _send_telegram_confirmation_request(message: str, state: "_BotState") -> boo
                 state.update_offset = update["update_id"] + 1
                 result = _process_telegram_update(update, state, base_url, chat_id)
                 if result == "confirm":
-                    print("✅ Owner confirmed the order.")
+                    print(fnline(), "✅ Owner confirmed the order.")
                     return True
                 if result == "reject":
-                    print("❌ Owner rejected the order.")
+                    print(fnline(), "❌ Owner rejected the order.")
                     return False
         except Exception as exc:
-            print(f"⚠️ Telegram polling error: {exc}")
+            print(fnline(), f"⚠️ Telegram polling error: {exc}")
             time.sleep(2)
 
-    print("⏰ Confirmation timed out — order will NOT execute.")
+    print(fnline(), "⏰ Confirmation timed out — order will NOT execute.")
     _tg_send(base_url, chat_id, "⏰ Confirmation timed out. Order *NOT* executed.")
     return False
 
@@ -146,7 +183,7 @@ def _resolve_trained_artifact_paths():
             raise FileNotFoundError(f"❌ ARTIFACT_RUN='{artifact_run}' — model.zip not found at {model_zip}")
         if not os.path.exists(scaler_pkl):
             raise FileNotFoundError(f"❌ ARTIFACT_RUN='{artifact_run}' — scaler.pkl not found at {scaler_pkl}")
-        print(f"📌 Using pinned artifact run: {run_dir}")
+        print(fnline(), f"📌 Using pinned artifact run: {run_dir}")
         return (
             os.path.join(run_dir, "model"),
             scaler_pkl,
@@ -186,7 +223,7 @@ def _resolve_trained_artifact_paths():
         )
 
     latest_run_dir = sorted(candidates, key=lambda x: x[0], reverse=True)[0][1]
-    print(f"ℹ️ Using latest compatible artifact run: {latest_run_dir}")
+    print(fnline(), f"ℹ️ Using latest compatible artifact run: {latest_run_dir}")
     return (
         os.path.join(latest_run_dir, "model"),
         os.path.join(latest_run_dir, "scaler.pkl"),
@@ -196,7 +233,7 @@ def _resolve_trained_artifact_paths():
 
 def _validate_live_compatibility(metadata_path: str) -> None:
     if not os.path.exists(metadata_path):
-        print(f"⚠️ Metadata not found at {metadata_path}; skipping compatibility validation.")
+        print(fnline(), f"⚠️ Metadata not found at {metadata_path}; skipping compatibility validation.")
         return
 
     with open(metadata_path, "r") as f:
@@ -232,8 +269,7 @@ def _validate_live_compatibility(metadata_path: str) -> None:
         lines.append("Align config/settings.py with the trained run, or retrain.")
         raise ValueError("\n".join(lines))
 
-    print("✅ Live compatibility check passed against training metadata.")
-
+    print(fnline(), "✅ Live compatibility check passed against training metadata.")
 
 def _download_recent_prices(symbol: str, timeframe: str) -> pd.DataFrame:
     if timeframe == "1h":
@@ -429,7 +465,7 @@ class _BotState:
             with open(self._STATE_FILE, "w") as f:
                 json.dump({"mode": self.mode}, f)
         except Exception as exc:
-            print(f"⚠️ Could not save trader state: {exc}")
+            print(fnline(), f"⚠️ Could not save trader state: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -443,7 +479,7 @@ def _tg_send(base_url: str, chat_id: str, text: str, reply_markup=None) -> None:
     try:
         requests.post(f"{base_url}/sendMessage", json=payload, timeout=10)
     except Exception as exc:
-        print(f"⚠️ Telegram send error: {exc}")
+        print(fnline(), f"⚠️ Telegram send error: {exc}")
 
 
 def _tg_send_status(state: _BotState, base_url: str, chat_id: str, trading_client=None) -> None:
@@ -551,7 +587,7 @@ def _poll_telegram_commands_once(state: _BotState, trading_client=None) -> None:
             state.update_offset = update["update_id"] + 1
             _process_telegram_update(update, state, base_url, chat_id, trading_client)
     except Exception as exc:
-        print(f"⚠️ Telegram poll error: {exc}")
+        print(fnline(), f"⚠️ Telegram poll error: {exc}")
         time.sleep(5)
 
 
@@ -692,8 +728,8 @@ def _run_one_agent_cycle(
     action = int(action[0]) if isinstance(action, np.ndarray) else int(action)
     action_text = _action_to_text(action)
 
-    print(f"📊 Price: ${latest_price:.2f} | Action: {action} -> {action_text}")
-    print(f"💵 Budget cash: ${current_cash:.2f} | Shares: {current_shares:.6f}")
+    print(fnline(), f"📊 Price: ${latest_price:.2f} | Action: {action} -> {action_text}")
+    print(fnline(), f"💵 Budget cash: ${current_cash:.2f} | Shares: {current_shares:.6f}")
 
     action_is_trade = action_text != "HOLD"
 
@@ -714,7 +750,7 @@ def _run_one_agent_cycle(
         execute = state.mode == "autopilot"
 
     execution_result = _submit_action(trading_client, action, current_cash, current_shares, execute=execute)
-    print(f"✅ Execution result: {execution_result}")
+    print(fnline(), f"✅ Execution result: {execution_result}")
 
     mode_label = {"autopilot": "AUTOPILOT", "secure": "SECURE"}.get(state.mode, "SIMULATE")
     _send_telegram_alert(
@@ -736,9 +772,9 @@ def run_live_trader() -> None:
     """
     load_dotenv()
     state = _BotState()
-    print(f"🟢 STARTING LIVE TRADER | {settings.SYMBOL} ({settings.TIMEFRAME})")
-    print(f"🔧 Trader mode: {state.mode.upper()}")
-    print(f"💰 Trading budget: ${settings.LIVE_TRADING_BUDGET:,.0f}")
+    print(fnline(), f"🟢 STARTING LIVE TRADER | {settings.SYMBOL} ({settings.TIMEFRAME})")
+    print(fnline(), f"🔧 Trader mode: {state.mode.upper()}")
+    print(fnline(), f"💰 Trading budget: ${settings.LIVE_TRADING_BUDGET:,.0f}")
 
     alpaca_key = os.getenv("ALPACA_API_KEY")
     alpaca_secret = os.getenv("ALPACA_SECRET_KEY")
@@ -764,7 +800,7 @@ def run_live_trader() -> None:
     _validate_live_compatibility(metadata_path)
 
     scaler = joblib.load(scaler_path)
-    print(f"🧠 Loading model from {model_base_path}.zip")
+    print(fnline(), f"🧠 Loading model from {model_base_path}.zip")
     model = PPO.load(model_base_path)
 
     _run_one_agent_cycle(trading_client, model, scaler, state)
@@ -785,9 +821,9 @@ def run_live_trader_bot() -> None:
     load_dotenv()
     state = _BotState()
 
-    print(f"🤖 STARTING LIVE TRADER BOT | {settings.SYMBOL} ({settings.TIMEFRAME})")
-    print(f"🔧 Initial mode: {state.mode.upper()}")
-    print(f"💰 Trading budget: ${settings.LIVE_TRADING_BUDGET:,.0f}")
+    print(fnline(), f"🤖 STARTING LIVE TRADER BOT | {settings.SYMBOL} ({settings.TIMEFRAME})")
+    print(fnline(), f"🔧 Initial mode: {state.mode.upper()}")
+    print(fnline(), f"💰 Trading budget: ${settings.LIVE_TRADING_BUDGET:,.0f}")
 
     alpaca_key = os.getenv("ALPACA_API_KEY")
     alpaca_secret = os.getenv("ALPACA_SECRET_KEY")
@@ -799,7 +835,7 @@ def run_live_trader_bot() -> None:
     model_base_path, scaler_path, metadata_path = _resolve_trained_artifact_paths()
     _validate_live_compatibility(metadata_path)
     scaler = joblib.load(scaler_path)
-    print(f"🧠 Loading model from {model_base_path}.zip")
+    print(fnline(), f"🧠 Loading model from {model_base_path}.zip")
     model = PPO.load(model_base_path)
 
     token = os.getenv("TELEGRAM_TOKEN")
@@ -811,7 +847,7 @@ def run_live_trader_bot() -> None:
             prev = drain.json().get("result", [])
             state.update_offset = (prev[-1]["update_id"] + 1) if prev else 0
         except Exception as exc:
-            print(f"⚠️ Telegram drain failed: {exc}")
+            print(fnline(), f"⚠️ Telegram drain failed: {exc}")
         _tg_send(
             base_url, chat_id,
             f"🤖 *LIVE TRADER BOT STARTED*\n"
@@ -821,11 +857,11 @@ def run_live_trader_bot() -> None:
             f"Send /help for available commands.",
         )
     else:
-        print("⚠️ TELEGRAM_TOKEN/TELEGRAM_CHAT_ID not set — Telegram disabled.")
+        print(fnline(), "⚠️ TELEGRAM_TOKEN/TELEGRAM_CHAT_ID not set — Telegram disabled.")
 
     while not state.stop_requested:
         next_run = _next_candle_time(settings.TIMEFRAME)
-        print(f"⏰ Next agent cycle at: {next_run.isoformat()}")
+        print(fnline(), f"⏰ Next agent cycle at: {next_run.isoformat()}")
 
         while datetime.now(timezone.utc) < next_run and not state.stop_requested:
             _poll_telegram_commands_once(state, trading_client)
@@ -833,7 +869,7 @@ def run_live_trader_bot() -> None:
         if state.stop_requested:
             break
 
-        print(f"🔔 Running agent cycle | {_now_utc_iso()} | mode={state.mode.upper()}")
+        print(fnline(), f"🔔 Running agent cycle | {_now_utc_iso()} | mode={state.mode.upper()}")
         try:
             _run_one_agent_cycle(trading_client, model, scaler, state)
         except Exception as exc:
@@ -842,10 +878,11 @@ def run_live_trader_bot() -> None:
             _send_telegram_alert(errmsg)
 
     _send_telegram_alert(f"🛑 Live trader bot stopped at {_now_utc_iso()}.")
-    print("🛑 Bot stopped.")
+    print(fnline(), "🛑 Bot stopped.")
 
 
 if __name__ == "__main__":
+    setup_artifact_symlinks()
     parser = argparse.ArgumentParser(description="Fox of Wallstreet — live PPO trader")
     parser.add_argument(
         "--bot",

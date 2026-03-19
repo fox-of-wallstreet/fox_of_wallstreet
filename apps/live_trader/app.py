@@ -99,6 +99,18 @@ with st.sidebar:
     else:
         st.success(f"✅ {st.session_state['model_info'].get('name', 'Unknown')[:20]}...")
     
+    # Telegram status
+    st.divider()
+    st.subheader("📱 Notifications")
+    import os
+    has_telegram = bool(os.getenv("TELEGRAM_TOKEN")) and bool(os.getenv("TELEGRAM_CHAT_ID"))
+    if has_telegram:
+        st.success("✅ Telegram active")
+        st.caption("Trade alerts enabled")
+    else:
+        st.info("ℹ️ Telegram not configured")
+        st.caption("Add token in Settings for alerts")
+    
     st.divider()
     
     # Quick links

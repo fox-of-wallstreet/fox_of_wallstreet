@@ -386,6 +386,10 @@ with right_col:
         
         # ===== SIMULATE MODE =====
         if mode == "simulate":
+            # Initialize quantities for Telegram
+            shares = 0
+            shares_to_sell = 0
+            
             # Just update virtual portfolio
             if "BUY" in action_name:
                 fraction = 1.0 if "100" in action_name else 0.5
@@ -441,15 +445,53 @@ with right_col:
             st.success(f"📝 {msg}")
             
             # Send Telegram notification for demo purposes (even in simulate mode)
+            telegram_sent = False
             if telegram.enabled:
-                telegram.notify_order(
-                    symbol=trading_symbol,
-                    action=action_name,
-                    quantity=int(shares) if "BUY" in action_name else int(shares_to_sell) if "SELL" in action_name else 0,
-                    price=latest_price,
-                    mode=f"SIMULATE (DEMO)",
-                )
-                st.info("📱 Telegram notification sent (demo mode)")
+                try:
+                    # Calculate quantity for Telegram
+                    if "BUY" in action_name:
+                        qty = int(shares) if shares > 0 else 0
+                    elif "SELL" in action_name:
+                        qty = int(shares_to_sell) if shares_to_sell > 0 else 0
+                    else:
+                        qty = 0
+                    
+                    success = telegram.notify_order(
+                        symbol=trading_symbol,
+                        action=action_name,
+                        quantity=qty,
+                        price=latest_price,
+                        mode="SIMULATE (DEMO)",
+                    )
+                    
+                    if success:
+                        telegram_sent = True
+                        telegram_msg = "📱 Telegram notification sent (demo mode)"
+                        st.info(telegram_msg)
+                        # Add to activity log
+                        st.session_state["activity_log"].append({
+                            "timestamp": datetime.now().strftime("%H:%M:%S"),
+                            "message": f"Telegram: {action_name} notification sent",
+                        })
+                    else:
+                        st.warning("⚠️ Telegram notification failed to send")
+                        st.session_state["activity_log"].append({
+                            "timestamp": datetime.now().strftime("%H:%M:%S"),
+                            "message": "Telegram: Failed to send notification",
+                        })
+                        
+                except Exception as e:
+                    st.error(f"❌ Telegram error: {e}")
+                    st.session_state["activity_log"].append({
+                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                        "message": f"Telegram error: {str(e)[:50]}",
+                    })
+            else:
+                # Telegram not configured - show info
+                st.session_state["activity_log"].append({
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "message": "Telegram: Not configured (skipped)",
+                })
             
             st.rerun()
             return

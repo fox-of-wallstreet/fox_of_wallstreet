@@ -1,0 +1,30 @@
+# Live Trader App Dependencies
+# Install: pip install -r requirements.txt
+
+# Core framework
+streamlit>=1.32.0
+streamlit-autorefresh>=1.0.0  # For autonomous mode
+
+# Data and visualization
+pandas>=2.0.0
+plotly>=5.18.0
+numpy>=1.24.0
+
+# Alpaca trading (required for SECURE and AUTOPILOT modes)
+alpaca-py>=0.15.0
+
+# Environment management
+python-dotenv>=1.0.0
+
+# Date/time handling
+pytz>=2023.3
+
+# Utilities
+joblib>=1.3.0
+
+# Parent project dependencies (must be installed in parent project)
+# - stable-baselines3
+# - scikit-learn
+# - yfinance
+# - torch
+# - transformers

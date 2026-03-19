@@ -1,0 +1,41 @@
+{
+  "created_at_utc": "2026-03-16T10:53:34.204440+00:00",
+  "run_id": "ppo_TSLA_1h_discrete_5_news_macro_time_20260316_1132",
+  "symbol": "TSLA",
+  "timeframe": "1h",
+  "action_space_type": "discrete_5",
+  "reward_strategy": "pure_pnl",
+  "test_dates": {
+    "start": "2025-11-01",
+    "end": "2026-03-06",
+    "bars_evaluated": 579
+  },
+  "core_metrics": {
+    "final_portfolio_value": 11253.296994,
+    "total_return_pct": 12.53297,
+    "logged_events": 372,
+    "trades_per_100_bars": 64.248705
+  },
+  "cycle_metrics": {
+    "n_completed_cycles": 25,
+    "avg_holding_duration_bars": 92.6,
+    "avg_pnl_per_cycle_dollars": 52.743757,
+    "avg_return_per_cycle_pct": 0.52196
+  },
+  "artifact_paths": {
+    "ledger_path": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_TSLA_1h_discrete_5_news_macro_time_20260316_1132/backtest_ledger.csv",
+    "summary_path": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_TSLA_1h_discrete_5_news_macro_time_20260316_1132/backtest_summary.json",
+    "reports_dir": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_TSLA_1h_discrete_5_news_macro_time_20260316_1132/reports",
+    "figures_dir": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_TSLA_1h_discrete_5_news_macro_time_20260316_1132/reports/figures",
+    "tables_dir": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_TSLA_1h_discrete_5_news_macro_time_20260316_1132/reports/tables",
+    "summary_dir": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_TSLA_1h_discrete_5_news_macro_time_20260316_1132/reports/summary",
+    "report_index_path": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_TSLA_1h_discrete_5_news_macro_time_20260316_1132/reports/summary/report_index.json",
+    "report_artifacts": {
+      "equity_timeseries_csv": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_TSLA_1h_discrete_5_news_macro_time_20260316_1132/reports/tables/equity_timeseries.csv",
+      "actions_overlay_png": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_TSLA_1h_discrete_5_news_macro_time_20260316_1132/reports/figures/actions_overlay.png",
+      "equity_vs_benchmark_png": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_TSLA_1h_discrete_5_news_macro_time_20260316_1132/reports/figures/equity_vs_benchmark.png",
+      "drawdown_curve_png": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_TSLA_1h_discrete_5_news_macro_time_20260316_1132/reports/figures/drawdown_curve.png",
+      "trade_return_hist_png": "/home/mogi/code/Erwin01611/fox_of_wallstreet/artifacts/ppo_TSLA_1h_discrete_5_news_macro_time_20260316_1132/reports/figures/trade_return_hist.png"
+    }
+  }
+}

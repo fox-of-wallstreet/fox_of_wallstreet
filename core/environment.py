@@ -119,13 +119,15 @@ class TradingEnv(gym.Env):
 
         if hit_stop_loss or hit_take_profit:
             actual_sell_price = current_price * (1 - settings.SLIPPAGE_PCT)
-            self.balance     += self.position * actual_sell_price
-            self.position     = 0.0
-            self.entry_price  = 0.0
+            self.balance += self.position * actual_sell_price
+            self.position = 0.0
+            self.entry_price = 0.0
             self.bars_in_trade = 0
 
-            label = "🛑 STOP LOSS" if hit_stop_loss else "🎯 TAKE PROFIT"
-            print(f"{label} triggered at {current_price:.2f} | PnL: {unrealized_pnl_pct:.2%}")
+            if getattr(settings, "ENV_VERBOSE", False):
+                label = "🛑 STOP LOSS" if hit_stop_loss else "🎯 TAKE PROFIT"
+                print(f"{label} triggered at {current_price:.2f} | PnL: {unrealized_pnl_pct:.2%}")
+
             return True, 0.0  # No extra penalty — this is expected market behaviour
 
         return False, 0.0

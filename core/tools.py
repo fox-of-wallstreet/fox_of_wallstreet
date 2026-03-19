@@ -3,7 +3,6 @@ Place for global things.
 '''
 import os
 import sys
-from config import settings
 
 def fnline():
     '''

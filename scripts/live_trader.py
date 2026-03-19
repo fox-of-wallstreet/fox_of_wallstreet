@@ -897,7 +897,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     if args.model:
-        print(fnline(), "Found model", args.model[0])
+        print(fnline(), "Selected model", args.model[0])
         os.environ['ARTIFACT_RUN'] = args.model[0]
 
     if args.bot:

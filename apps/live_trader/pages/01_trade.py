@@ -179,10 +179,25 @@ with left_col:
             data = fetch_recent_prices(symbol, timeframe, lookback_days=5)
             return data
         except Exception as e:
-            st.error(f"Error fetching price: {e}")
+            st.error(f"❌ Error fetching price data for {symbol}: {e}")
+            st.info("""
+            **Troubleshooting:**
+            1. Check if the stock symbol is correct (e.g., AAPL, not APPL)
+            2. Market may be closed (weekends/holidays)
+            3. Try refreshing the page
+            4. Check your internet connection
+            
+            If the problem persists, yfinance may be temporarily unavailable.
+            """)
             return None
     
     price_data = get_price_data(trading_symbol, settings.TIMEFRAME)
+    
+    # Debug info (visible only on error)
+    if price_data is None:
+        st.warning(f"⚠️ Could not fetch data for symbol: **{trading_symbol}**")
+        st.info(f"Model symbol from metadata: {model_info.get('symbol', 'Not set')}")
+        st.info(f"Settings.SYMBOL: {settings.SYMBOL}")
     
     if price_data is not None:
         latest_price = float(price_data['Close'].iloc[-1])

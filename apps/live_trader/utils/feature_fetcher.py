@@ -29,63 +29,85 @@ from core.processor import (
 )
 
 
-def fetch_recent_prices(symbol: str, timeframe: str, lookback_days: int = 60) -> pd.DataFrame:
+def fetch_recent_prices(symbol: str, timeframe: str, lookback_days: int = 60, max_retries: int = 3) -> pd.DataFrame:
     """
-    Fetch recent price data from yfinance.
+    Fetch recent price data from yfinance with retry logic.
     
     Args:
         symbol: Stock symbol (e.g., "TSLA")
         timeframe: "1h" or "1d"
         lookback_days: How many days of history to fetch
+        max_retries: Number of retry attempts
         
     Returns:
         DataFrame with Date, Open, High, Low, Close, Volume
     """
+    import time
+    
     period = f"{lookback_days}d" if timeframe == "1h" else f"{lookback_days*5}d"
     
     print(f"📥 Fetching {timeframe} data for {symbol} (last {lookback_days} days)...")
     
-    try:
-        data = yf.download(
-            symbol,
-            period=period,
-            interval=timeframe,
-            progress=False,
-            auto_adjust=True
-        )
-        
-        if data.empty:
-            raise ValueError(f"No data returned for {symbol}")
-        
-        # Handle MultiIndex columns from yfinance
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = [col[0] for col in data.columns]
-        
-        # Reset index to get Date as column
-        data = data.reset_index()
-        
-        # Rename columns
-        if 'Datetime' in data.columns:
-            data = data.rename(columns={'Datetime': 'Date'})
-        elif 'Date' not in data.columns:
-            raise ValueError("No Date/Datetime column found")
-        
-        # Ensure correct columns
-        required = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
-        for col in required:
-            if col not in data.columns:
-                raise ValueError(f"Missing column: {col}")
-        
-        # Clean up
-        data['Date'] = pd.to_datetime(data['Date'])
-        data = data.dropna()
-        data = data.sort_values('Date').reset_index(drop=True)
-        
-        print(f"✅ Fetched {len(data)} rows of price data")
-        return data[required]
-        
-    except Exception as e:
-        raise RuntimeError(f"Failed to fetch prices: {e}")
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            # Add small delay between retries
+            if attempt > 0:
+                print(f"🔄 Retry attempt {attempt + 1}/{max_retries}...")
+                time.sleep(1)
+            
+            data = yf.download(
+                symbol,
+                period=period,
+                interval=timeframe,
+                progress=False,
+                auto_adjust=True
+            )
+            
+            if data.empty:
+                # Try with a longer period
+                if attempt < max_retries - 1:
+                    print(f"⚠️ No data returned, trying longer period...")
+                    period = f"{lookback_days * 3}d" if timeframe == "1h" else f"{lookback_days*15}d"
+                    continue
+                raise ValueError(f"No data returned for {symbol}. Market may be closed or symbol invalid.")
+            
+            # Handle MultiIndex columns from yfinance
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = [col[0] for col in data.columns]
+            
+            # Reset index to get Date as column
+            data = data.reset_index()
+            
+            # Rename columns
+            if 'Datetime' in data.columns:
+                data = data.rename(columns={'Datetime': 'Date'})
+            elif 'Date' not in data.columns:
+                raise ValueError("No Date/Datetime column found")
+            
+            # Ensure correct columns
+            required = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
+            for col in required:
+                if col not in data.columns:
+                    raise ValueError(f"Missing column: {col}")
+            
+            # Clean up
+            data['Date'] = pd.to_datetime(data['Date'])
+            data = data.dropna()
+            data = data.sort_values('Date').reset_index(drop=True)
+            
+            print(f"✅ Fetched {len(data)} rows of price data")
+            return data[required]
+            
+        except Exception as e:
+            last_error = e
+            print(f"⚠️ Attempt {attempt + 1} failed: {e}")
+            if attempt < max_retries - 1:
+                continue
+    
+    # All retries failed
+    raise RuntimeError(f"Failed to fetch prices after {max_retries} attempts: {last_error}")
 
 
 def fetch_recent_macro(timeframe: str, lookback_days: int = 60) -> pd.DataFrame:

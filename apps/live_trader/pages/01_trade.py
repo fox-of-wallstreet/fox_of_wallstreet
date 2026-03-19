@@ -84,15 +84,20 @@ if "portfolio" not in st.session_state or st.session_state["portfolio"] is None:
 model_info = st.session_state.get("model_info", {})
 action_space = model_info.get("action_space", "discrete_3")
 
-# Get symbol from model metadata (not settings!)
-trading_symbol = model_info.get("symbol", settings.SYMBOL)
-
-# Show warning if model symbol differs from settings
-if trading_symbol != settings.SYMBOL:
-    st.warning(
-        f"⚠️ Model trained on **{trading_symbol}**, but settings has **{settings.SYMBOL}**. "
-        f"Using **{trading_symbol}** for price fetching."
-    )
+# IMPORTANT: Live trading uses the model's symbol, NOT settings.SYMBOL
+# This allows trading any model without changing settings.py
+if model_info.get("symbol"):
+    trading_symbol = model_info["symbol"]
+    
+    # Show info about which symbol we're trading (not a warning, just info)
+    if trading_symbol != settings.SYMBOL:
+        st.info(
+            f"ℹ️ Loaded model trained on **{trading_symbol}**. "
+            f"Trading {trading_symbol} (ignoring settings.SYMBOL={settings.SYMBOL})."
+        )
+else:
+    # Fallback only if no model loaded yet
+    trading_symbol = settings.SYMBOL
 
 # Auto-refresh settings - Mode-specific defaults
 st.sidebar.divider()
@@ -431,7 +436,7 @@ with right_col:
         
         # Step 1: Sync portfolio from Alpaca
         with st.spinner("Syncing with Alpaca..."):
-            alpaca_portfolio = alpaca.get_portfolio()
+            alpaca_portfolio = alpaca.get_portfolio(symbol=trading_symbol)
             portfolio["cash"] = alpaca_portfolio["cash"]
             portfolio["position"] = alpaca_portfolio["position"]
             portfolio["entry_price"] = alpaca_portfolio["entry_price"]
@@ -441,7 +446,8 @@ with right_col:
             with st.spinner("Verifying price..."):
                 is_valid, alpaca_price, verify_msg = alpaca.verify_price(
                     latest_price, 
-                    max_diff_pct=settings.SLIPPAGE_PCT * 2  # 0.1% default
+                    max_diff_pct=settings.SLIPPAGE_PCT * 2,  # 0.1% default
+                    symbol=trading_symbol,
                 )
                 
                 if not is_valid:
@@ -484,6 +490,7 @@ with right_col:
                 current_price=latest_price,
                 current_shares=portfolio["position"],
                 available_cash=portfolio["cash"],
+                symbol=trading_symbol,
             )
         
         # Step 5: Handle result

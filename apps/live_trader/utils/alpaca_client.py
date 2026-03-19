@@ -64,13 +64,17 @@ class AlpacaTrader:
         """Check if Alpaca client is connected."""
         return self.client is not None
     
-    def get_portfolio(self) -> Dict:
+    def get_portfolio(self, symbol: str = None) -> Dict:
         """
         Get current portfolio state from Alpaca.
         
+        Args:
+            symbol: Stock symbol to check position for (default: settings.SYMBOL)
+            
         Returns:
             Dict with cash, position, entry_price, etc.
         """
+        symbol = symbol or settings.SYMBOL
         if not self.is_connected():
             return {
                 "cash": 0.0,
@@ -90,7 +94,7 @@ class AlpacaTrader:
             
             # Get position
             try:
-                position = self.client.get_open_position(settings.SYMBOL)
+                position = self.client.get_open_position(symbol)
                 current_shares = float(position.qty)
                 entry_price = float(position.avg_entry_price)
                 unrealized_pnl_pct = float(position.unrealized_plpc) if position.unrealized_plpc else 0.0
@@ -192,6 +196,7 @@ class AlpacaTrader:
         current_price: float,
         current_shares: float,
         available_cash: float,
+        symbol: str = None,
     ) -> Dict:
         """
         Submit order to Alpaca.
@@ -202,10 +207,12 @@ class AlpacaTrader:
             current_price: Current stock price
             current_shares: Current position size
             available_cash: Available cash
+            symbol: Stock symbol to trade (default: settings.SYMBOL)
             
         Returns:
             Dict with order status, message, etc.
         """
+        symbol = symbol or settings.SYMBOL
         if not self.is_connected():
             return {
                 "success": False,
@@ -233,7 +240,7 @@ class AlpacaTrader:
                         return {"success": False, "status": "skipped", "message": "Investment too small"}
                     
                     order = MarketOrderRequest(
-                        symbol=settings.SYMBOL,
+                        symbol=symbol,
                         notional=investment,
                         side=OrderSide.BUY,
                         time_in_force=TimeInForce.DAY,
@@ -246,7 +253,7 @@ class AlpacaTrader:
                         return {"success": False, "status": "skipped", "message": "No position to sell"}
                     
                     order = MarketOrderRequest(
-                        symbol=settings.SYMBOL,
+                        symbol=symbol,
                         qty=current_shares,
                         side=OrderSide.SELL,
                         time_in_force=TimeInForce.DAY,
@@ -264,7 +271,7 @@ class AlpacaTrader:
                         return {"success": False, "status": "skipped", "message": "Investment too small"}
                     
                     order = MarketOrderRequest(
-                        symbol=settings.SYMBOL,
+                        symbol=symbol,
                         notional=investment,
                         side=OrderSide.BUY,
                         time_in_force=TimeInForce.DAY,
@@ -278,7 +285,7 @@ class AlpacaTrader:
                         return {"success": False, "status": "skipped", "message": "Investment too small"}
                     
                     order = MarketOrderRequest(
-                        symbol=settings.SYMBOL,
+                        symbol=symbol,
                         notional=investment,
                         side=OrderSide.BUY,
                         time_in_force=TimeInForce.DAY,
@@ -291,7 +298,7 @@ class AlpacaTrader:
                         return {"success": False, "status": "skipped", "message": "No position to sell"}
                     
                     order = MarketOrderRequest(
-                        symbol=settings.SYMBOL,
+                        symbol=symbol,
                         qty=current_shares,
                         side=OrderSide.SELL,
                         time_in_force=TimeInForce.DAY,
@@ -305,7 +312,7 @@ class AlpacaTrader:
                     
                     shares_to_sell = current_shares * 0.5
                     order = MarketOrderRequest(
-                        symbol=settings.SYMBOL,
+                        symbol=symbol,
                         qty=shares_to_sell,
                         side=OrderSide.SELL,
                         time_in_force=TimeInForce.DAY,

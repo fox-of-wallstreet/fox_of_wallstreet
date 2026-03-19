@@ -317,13 +317,48 @@ with right_col:
                 st.session_state["last_ai_decision"] = result
                 
                 # Log activity
+                action_name = action_to_name(result['action'], action_space)
                 log_entry = {
                     "timestamp": datetime.now().strftime("%H:%M:%S"),
-                    "message": f"AI Analysis: {action_to_name(result['action'], action_space)} (conf: {result['confidence']:.1f}%)",
+                    "message": f"AI Analysis: {action_name} (conf: {result['confidence']:.1f}%)",
                 }
                 if "activity_log" not in st.session_state:
                     st.session_state["activity_log"] = []
                 st.session_state["activity_log"].append(log_entry)
+                
+                # Send Telegram notification for AI recommendation
+                if telegram.enabled:
+                    try:
+                        telegram_msg = f"""
+🦊 *Fox of Wallstreet - AI Recommendation*
+
+📊 Analysis Complete
+🎯 Symbol: {trading_symbol}
+💡 Recommendation: *{action_name}*
+📈 Confidence: {result['confidence']:.1f}%
+💵 Current Price: ${result['latest_price']:.2f}
+
+⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+Go to the app to execute this trade!
+                        """.strip()
+                        
+                        success = telegram.send_message(telegram_msg)
+                        if success:
+                            st.session_state["activity_log"].append({
+                                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                                "message": f"📱 Telegram: AI recommendation sent ({action_name})",
+                            })
+                        else:
+                            st.session_state["activity_log"].append({
+                                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                                "message": "⚠️ Telegram: Failed to send recommendation",
+                            })
+                    except Exception as e:
+                        st.session_state["activity_log"].append({
+                            "timestamp": datetime.now().strftime("%H:%M:%S"),
+                            "message": f"❌ Telegram error: {str(e)[:30]}",
+                        })
                 
                 st.success("Analysis complete!")
                 
